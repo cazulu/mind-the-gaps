@@ -67,9 +67,9 @@ testScanOptions = ScanOptions(startFreqMhz=int(startFreq), startFreqKhz=int((sta
 while True:
 	print "Generating data"
 	#Randomize the frequency range if the --randomizeRange parameter is set
-	if args.randRange and time.time()-randTimer:
-	    startFreq=random.randrange(MIN_FREQ, (MAX_FREQ+MIN_FREQ)/2 -1)
-	    stopFreq=random.randrange((MAX_FREQ+MIN_FREQ)/2 +1,MAX_FREQ)
+	if args.randRange and time.time()-randTimer>=DFLT_RAND_DELAY:
+	    startFreq=random.randrange(int(MIN_FREQ), int((MAX_FREQ+MIN_FREQ)/2) -1)
+	    stopFreq=random.randrange(int((MAX_FREQ+MIN_FREQ)/2 +1),int(MAX_FREQ))
 	    testScanOptions=ScanOptions(startFreqMhz=startFreq, startFreqKhz=0, stopFreqMhz=stopFreq, stopFreqKhz=0, \
 	                freqResolution=203, modFormat=3, activateAGC=1, agcLnaGain=0, \
 	                agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)

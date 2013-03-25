@@ -157,7 +157,6 @@ class FreqControlBox(wx.Panel):
         self.freqResolution = self.freqResolution_text.GetValue()
         print "New freqResolution value: ", self.freqResolution
         
-
 class ModControlBox(wx.Panel):
     def __init__(self, parent, ID, label):
         wx.Panel.__init__(self, parent, ID)
@@ -395,7 +394,9 @@ class ScannerGUI(wx.Frame):
         wx.Frame.__init__(self, None, -1, self.title)
         
         self.data = np.arange(779, 928)
+        self.maxData = self.data
         self.avgData = self.data
+        self.minData = self.data
         self.amtRecvArrays=0
         self.scannerAddr=("127.0.0.1",60000)
         
@@ -519,18 +520,23 @@ class ScannerGUI(wx.Frame):
         # plot the data as a line series, and save the reference 
         # to the plotted line series
         #
-        self.plot_data = self.axes.plot(
-            self.data, 
+        self.plot_maxData = self.axes.plot(
+            self.maxData, 
             linewidth=1,
-            color='b',
+            color='r',
             )[0]
         self.plot_avgData = self.axes.plot(
             self.avgData, 
             linewidth=1,
-            color='r',
+            color='g',
+            )[0]
+        self.plot_minData = self.axes.plot(
+            self.minData, 
+            linewidth=1,
+            color='b',
             )[0]
         
-        self.axes.legend(('Current', 'Average'), 'lower right', shadow=False, fontsize='small', frameon=True)
+        self.axes.legend(('Max', 'Avg', 'Min'), 'lower right', shadow=False, fontsize='small', frameon=True)
 
     def draw_plot(self):
         """ Redraws the plot
@@ -540,8 +546,8 @@ class ScannerGUI(wx.Frame):
         # if the auto range option is checked, otherwise
         # use the user-provided values
         if self.cb_yAutoRange.IsChecked():
-            ymin = round(min(min(self.data), min(self.avgData))) - 1
-            ymax = round(max(max(self.data), max(self.avgData))) + 1
+            ymin = round(min(self.minData)) - 1
+            ymax = round(max(self.maxData)) + 1
         else:
             ymin = self.yRange_control.yMin
             ymax = self.yRange_control.yMax
@@ -565,11 +571,14 @@ class ScannerGUI(wx.Frame):
         
         self.axes.set_xbound(lower=startFreq, upper=stopFreq)
         
-        self.plot_data.set_xdata(freqValues)
-        self.plot_data.set_ydata(self.data)
+        self.plot_maxData.set_xdata(freqValues)
+        self.plot_maxData.set_ydata(self.maxData)
         
         self.plot_avgData.set_xdata(freqValues)
         self.plot_avgData.set_ydata(self.avgData)
+        
+        self.plot_minData.set_xdata(freqValues)
+        self.plot_minData.set_ydata(self.minData)
         
         self.canvas.draw()
         #Store the time of the last redraw, useful to prevent GUI overload
@@ -582,10 +591,12 @@ class ScannerGUI(wx.Frame):
             self.recvScanOptions=self.recvOptQueue.get()
             self.scannerAddr=self.addrQueue.get()
             
-            #If the scan options have changed, reset the averaging
+            #If the scan options have changed, reset the data vectors
             if self.recvScanOptions!=self.prevRecvScanOptions or self.amtRecvArrays<=0:
                 self.amtRecvArrays=1
+                self.maxData=self.data
                 self.avgData=self.data
+                self.minData=self.data
                 self.avgResetTimer=time.time()
             else:
                 self.amtRecvArrays+=1
@@ -595,6 +606,9 @@ class ScannerGUI(wx.Frame):
                 #or too many arrays have been received(for now, 1000), reset again
                 if time.time()-self.avgResetTimer>100 or self.amtRecvArrays>10000:
                     self.amtRecvArrays=0
+                #Check if any values have to go into the max and min vectors
+                self.maxData=np.amax([self.data, self.maxData], axis=0)
+                self.minData=np.amin([self.data, self.minData], axis=0)
             #Replot the data if more than 100ms have passed since the last time
             #This prevents the GUI from becoming unresponsive
             if time.time()-self.paintTimer>0.1:
