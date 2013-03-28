@@ -387,11 +387,13 @@ class RssiTimingControlBox(wx.Panel):
     def rssiWait_on_text_enter(self, event):
         self.rssiWait = self.rssiWait_text.GetValue()
         print "New rssiWait value: ", self.rssiWait
-
-class ScannerGUI(wx.Frame):
-    title = "GUI for the frequency scanning protocol"
+        
+class ScannerPlotTab(wx.Panel):
+    '''
+    Class that creates a panel where the frequency scanning results of a SINGLE board are plotted 
+    '''
     def __init__(self):
-        wx.Frame.__init__(self, None, -1, self.title)
+        wx.Panel.__init__(self, parent=parent, id=wx.ID_ANY)
         
         self.data = np.arange(779, 928)
         self.maxData = self.data
@@ -415,7 +417,6 @@ class ScannerGUI(wx.Frame):
         
         self.create_menu()
         self.create_status_bar()
-        self.create_main_panel()
         
         #Timer that registers the time of the last replot
         self.paintTimer=time.time()
@@ -425,32 +426,6 @@ class ScannerGUI(wx.Frame):
         #self.Bind(wx.EVT_TIMER, self.on_redraw_timer, self.redraw_timer)        
         #self.redraw_timer.Start(100)
         #y-axis range of the plot
-        
-        # Set up event handler for any worker thread results
-        EVT_RESULT(self, self.on_new_rssi_data)
-        
-        #Start the UDP backend
-        self.dataQueue=Queue.Queue()
-        self.recvOptQueue=Queue.Queue()
-        self.addrQueue=Queue.Queue()
-        print "Starting UDP server..."
-        self.udpScanner = UdpScannerApp(self.dataQueue, self.recvOptQueue, self.addrQueue, self, EVT_RESULT_ID)
-        
-    def create_menu(self):
-        self.menubar = wx.MenuBar()
-        
-        menu_file = wx.Menu()
-        m_expt = menu_file.Append(-1, "&Save plot\tCtrl-S", "Save plot to file")
-        self.Bind(wx.EVT_MENU, self.on_save_plot, m_expt)
-        menu_file.AppendSeparator()
-        m_exit = menu_file.Append(-1, "E&xit\tCtrl-X", "Exit")
-        self.Bind(wx.EVT_MENU, self.on_exit, m_exit)
-                
-        self.menubar.Append(menu_file, "&File")
-        self.SetMenuBar(self.menubar)
-
-    def create_main_panel(self):
-        self.panel = wx.Panel(self)
 
         self.init_plot()
         self.canvas = FigCanvas(self.panel, -1, self.fig)
@@ -501,10 +476,7 @@ class ScannerGUI(wx.Frame):
         
         self.panel.SetSizer(self.vbox)
         self.vbox.Fit(self)
-    
-    def create_status_bar(self):
-        self.statusbar = self.CreateStatusBar()
-
+        
     def init_plot(self):
         self.dpi = 100
         self.fig = Figure(dpi=self.dpi)
@@ -585,7 +557,7 @@ class ScannerGUI(wx.Frame):
         self.paintTimer=time.time()
         
     def on_new_rssi_data(self, msg):
-        if not self.dataQueue.empty() and not self.recvOptQueue.empty() and not self.addrQueue.empty():
+        if not self.dataQueue.empty():
             self.data=self.dataQueue.get()
             self.prevRecvScanOptions=self.recvScanOptions
             self.recvScanOptions=self.recvOptQueue.get()
@@ -614,10 +586,60 @@ class ScannerGUI(wx.Frame):
             if time.time()-self.paintTimer>0.1:
                 print "\n\n****Plotting data....****\n\n"
                 self.draw_plot()
+                
+class ScannerNotebook(wx.Notebook):
+    '''
+    Class that contains all the tabs for the controls and the plots of the 
+    data of each board
+    '''
+    def __init__(self):
+        wx.Notebook.__init__(self, parent, id=wx.ID_ANY, style=wx.BK_DEFAULT)
+        
+        #Set up the event that tells us of the appearance of a new client
+        EVT_RESULT(self, self.on_new_scanner_client)
+        
+        #Namedtuple format to input data into the queue of the graphical interface 
+        self.ScanResults=collections.namedtuple('Scan results', 'clientAddr', 'recvOpt', 'rssiData')
+        print "Starting UDP server..."
+        #Start the UDP backend
+        self.udpScanner = UdpScannerApp(self, EVT_RESULT_ID)
+        
+        
+        
+        
+        #Create the first tab
+        #TODO: The controls should be in a separate tab from the graphs,
+        #and each graph tab should be created on demand when a new client arrives
+
+class ScannerGUI(wx.Frame):
+    title = "GUI for the frequency scanning protocol"
+    def __init__(self):
+        wx.Frame.__init__(self, None, -1, self.title)
+        
+    def create_menu(self):
+        self.menubar = wx.MenuBar()
+        
+        menu_file = wx.Menu()
+        m_expt = menu_file.Append(-1, "&Save plot\tCtrl-S", "Save plot to file")
+        self.Bind(wx.EVT_MENU, self.on_save_plot, m_expt)
+        menu_file.AppendSeparator()
+        m_exit = menu_file.Append(-1, "E&xit\tCtrl-X", "Exit")
+        self.Bind(wx.EVT_MENU, self.on_exit, m_exit)
+                
+        self.menubar.Append(menu_file, "&File")
+        self.SetMenuBar(self.menubar)
     
-    #When this button is clicked, we start a thread that sends
-    #the new scanning options to the microcontroller platform
+    def create_status_bar(self):
+        self.statusbar = self.CreateStatusBar()
+
+    
+    #
     def on_txScanOptions_button(self, event):
+        '''
+        When this button is clicked, we start a thread that sends
+        the new scanning options to the microcontroller platform
+        :param event: Button click event
+        '''
         #Gather all the options into a single ScanOptions namedtuple
         guiStartFreqMhz=int(float(self.freqRange_control.startFreq))
         guiStartFreqKhz=int((float(self.freqRange_control.startFreq) - guiStartFreqMhz)*1000)

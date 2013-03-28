@@ -5,8 +5,7 @@ import socket
 import collections
 import struct
 import argparse
-import scapy
-from scapy.all import *
+import os
 
 DFLT_SRC_IP = "127.0.0.1"
 DFLT_DST_IP = "127.0.0.1"
@@ -17,34 +16,45 @@ MAX_FREQ=928.0
 MIN_RES=58
 MAX_RES=812
 DFLT_RES=203
-DFLT_PKT_DELAY=0.01
+DFLT_PKT_DELAY=0.1
 DFLT_RAND_DELAY=5
 
 #Parse command-line options
 parser = argparse.ArgumentParser(description="Simple simulator of a white space detector board, \
 sends fake frequency scanning UDP messages using the same data format as the real embedded platform")
 group=parser.add_mutually_exclusive_group()
-group.add_argument("-f", "--freqRange", help="Frequency range of the scan in Mhz", type=float, nargs=2, metavar="f1 f2", default=[MIN_FREQ, MAX_FREQ])
+group.add_argument("-f", "--freqRange", help="Frequency range of the scan in Mhz", type=float, nargs=2, metavar="Freq", default=[MIN_FREQ, MAX_FREQ])
 group.add_argument("-R", "--randRange", help="Randomize the frequency range of the scan every, "+str(DFLT_RAND_DELAY)+" seconds", action="store_true")
-parser.add_argument("-r", "--freqResolution", help="Frequency resolution of the scan in Khz", type=float, default=DFLT_RES)
-parser.add_argument("-d", "--dstIP", help="IP address of the UDP frequency scanning server", default=DFLT_DST_IP)
-parser.add_argument("-s", "--srcIP", help="Source IP address of the UDP frequency scanning packets", default=DFLT_SRC_IP)
-parser.add_argument("-w", "--packetWait", help="Delay between UDP packets in ms", type=int, default=DFLT_PKT_DELAY)
+parser.add_argument("-r", "--freqResolution", help="Frequency resolution of the scan in Khz", type=float, default=DFLT_RES, metavar="Freq")
+parser.add_argument("-d", "--dstIP", help="IP address of the UDP frequency scanning server", default=DFLT_DST_IP, metavar="dstIP")
+parser.add_argument("-s", "--srcIP", help="Source IP address of the UDP frequency scanning packets", default=DFLT_SRC_IP, metavar="srcIP")
+parser.add_argument("-w", "--packetWait", help="Delay between UDP packets in ms", type=int, default=DFLT_PKT_DELAY, metavar="delay")
 args=parser.parse_args()
 
 #Check syntax of parameters
-if args.freqRange:
-	startFreq=args.freqRange[0]
-	stopFreq=args.freqRange[1]
-	if startFreq >= stopFreq:
-		parser.error("Syntax error in the freqRange parameter, freqStart<freqStop")
-	if startFreq<MIN_FREQ or stopFreq>MAX_FREQ:
-		parser.error("Syntax error in the freqRange parameter, acceptable range: [", MIN_FREQ, "-", MAX_FREQ, "]")
+#Import scapy only if there's really a need to spoof a source IP, otherwise use a normal socket
+if args.srcIP!=DFLT_SRC_IP:
+	if os.getuid()!=0:
+		parser.error("Root privileges required to spoof the source IP address of a packet, try running the script again with sudo")
+	try:
+		import scapy
+		from scapy.all import *
+	except ImportError, e:
+		parser.error("Scapy package not installed, required for spoofing source IP address. Try sudo apt-get install python-scapy")
+else:
+	sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+startFreq=args.freqRange[0]
+stopFreq=args.freqRange[1]
+if startFreq >= stopFreq:
+	parser.error("Syntax error in the freqRange parameter, freqStart<freqStop")
+if startFreq<MIN_FREQ or stopFreq>MAX_FREQ:
+	parser.error("Syntax error in the freqRange parameter, acceptable range: ["+str(MIN_FREQ)+"-"+str(MAX_FREQ)+"] Mhz")
 	
 if args.freqResolution:
 	freqResolution=args.freqResolution
 	if freqResolution<MIN_RES or freqResolution>MAX_RES:
-		parser.error("Syntax error in the freqResolution parameter, acceptable range: [", MIN_RES, "-", MAX_RES, "]")
+		parser.error("Syntax error in the freqResolution parameter, acceptable range: ["+str(MIN_RES)+"-"+str(MAX_RES)+"] Khz")
 		
 if args.randRange:
 	randTimer=time.time()
@@ -88,13 +98,18 @@ while True:
 	packed_data += struct.pack(optHeaderFormat, *testScanOptions)
 	#Add the data payload
 	packed_data += struct.pack(dataPayloadFormat, *rssiValuesDec)
-	#Send the data using the scapy library to spoof the source address
-	print "Sending data: ", amtRssiValues, " RSSI values"
-	conf.L3socket = L3RawSocket
-	ipPkt=IP(src=args.srcIP, dst=args.dstIP)
-	udpPkt=UDP(sport=SRC_PORT, dport=DST_PORT)
-	pkt=ipPkt/udpPkt/packed_data
-	send(pkt)
-	print "Data sent"
+	#Send the data using the scapy library if IP source spoofing is needed, otherwise use a normal socket
+	if args.srcIP!=DFLT_SRC_IP:
+			conf.L3socket = L3RawSocket
+			ipPkt=IP(src=args.srcIP, dst=args.dstIP)
+			udpPkt=UDP(sport=SRC_PORT, dport=DST_PORT)
+			pkt=ipPkt/udpPkt/packed_data
+			send(pkt)
+	else:
+		bytesToSend=pkgLen
+		print "Sending data: ", amtRssiValues, " RSSI values"
+    	while bytesToSend>0:
+        	bytesToSend-=sock.sendto(packed_data, (args.dstIP,DST_PORT))
+		print "Data sent"
 	time.sleep(args.packetWait/1000.0)
     
