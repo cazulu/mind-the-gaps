@@ -604,12 +604,15 @@ class ScannerNotebook(wx.Notebook):
         #Start the UDP backend
         self.udpScanner = UdpScannerApp(self, EVT_RESULT_ID)
         
-        
-        
-        
         #Create the first tab
         #TODO: The controls should be in a separate tab from the graphs,
         #and each graph tab should be created on demand when a new client arrives
+    
+    def on_new_scanner_client(self, event):
+        '''
+        Function triggered by the arrival of a new board
+        :param event:
+        '''
 
 class ScannerGUI(wx.Frame):
     title = "GUI for the frequency scanning protocol"
