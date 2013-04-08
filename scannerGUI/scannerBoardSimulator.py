@@ -29,7 +29,7 @@ parser.add_argument("-r", "--freqResolution", help="Frequency resolution of the 
 parser.add_argument("-d", "--dstIP", help="IP address of the UDP frequency scanning server", default=DFLT_DST_IP, metavar="dstIP")
 parser.add_argument("-s", "--srcIP", help="Source IP address of the UDP frequency scanning packets", default=DFLT_SRC_IP, metavar="srcIP")
 parser.add_argument("-w", "--packetWait", help="Delay between UDP packets in ms", type=int, default=DFLT_PKT_DELAY, metavar="delay")
-parser.add_argument("-n", "--packetLimit", help="Number of packets to send", type=int)
+parser.add_argument("-n", "--packetLimit", help="Number of packets to send", type=int, metavar='pktLim')
 args=parser.parse_args()
 
 #Check syntax of parameters

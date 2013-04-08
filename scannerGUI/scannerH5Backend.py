@@ -52,8 +52,7 @@ class H5ScannerThread(threading.Thread):
             scanResults=self.ScanResults(*qResult)
             
             if scanResults.rssiData!=None:
-                #Create the table description based on the scan options
-                #TODO: Right now we assume that the scan options will never change!!!!
+                #Create the table description based on the scan options!
                 scanTableDesc={'ipAddr':tb.StringCol(13),
                                'isAlive':tb.BoolCol(1),
                                'freqStart':tb.Float32Col(1),
@@ -61,6 +60,8 @@ class H5ScannerThread(threading.Thread):
                                'freqRes':tb.Float32Col(1),
                                'timestamp':tb.Time64Col(1),
                                'rssiData':tb.Int32Col(shape=(len(scanResults.rssiData),))}
+                
+                scanOpt=self.ScanOptions(*scanResults.recvOpt)
             
             
             #Obtain the table associated with the node IP address 
@@ -74,9 +75,12 @@ class H5ScannerThread(threading.Thread):
             else:
                 tableName=self.nodeDict[str(scanResults.clientAddr)]
                 table=self.h5File.getNode(self.h5Group, tableName)
-                #Check if the node was active in the last write operation
-                #and if not reset it
-                if table.nrows>0 and not table.cols.isAlive[0]:
+                #Reset the node if it was inactive in the previous iteration
+                #or if the scan options have changed
+                if table.nrows>0 and not table.cols.isAlive[0] \
+                or table.cols.freqStart[0]!=(scanOpt.startFreqMhz+scanOpt.startFreqKhz/1000.0) \
+                or table.cols.freqStop[0]!=(scanOpt.stopFreqMhz+scanOpt.stopFreqKhz/1000.0) \
+                or table.cols.freqRes[0]!=(scanOpt.freqResolution):
                     table.remove()
                     table=self.h5File.createTable(self.h5Group, tableName, scanTableDesc, "Node with the IP " + str(scanResults.clientAddr))
             
@@ -86,8 +90,7 @@ class H5ScannerThread(threading.Thread):
                 for row in table:
                     row['isAlive']=False
                     row.update()
-            else:                                
-                scanOpt=self.ScanOptions(*scanResults.recvOpt)
+            else:
                 row=table.row
                 #Store the scan data in the table
                 row['ipAddr']=str(scanResults.clientAddr)
