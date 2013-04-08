@@ -50,17 +50,18 @@ class H5ScannerThread(threading.Thread):
                 break
             
             scanResults=self.ScanResults(*qResult)
-            scanOpt=self.ScanOptions(*scanResults.recvOpt)
             
-            #Create the table description based on the scan options
-            #TODO: Right now we assume that the scan options will never change!!!!
-            scanTableDesc={'ipAddr':tb.StringCol(13),
-                           'isAlive':tb.BoolCol(1),
-                           'freqStart':tb.Float32Col(1),
-                           'freqStop':tb.Float32Col(1),
-                           'freqRes':tb.Float32Col(1),
-                           'timestamp':tb.Time64Col(),
-                           'rssiData':tb.Int32Col(shape=(len(scanResults.rssiData),))}
+            if scanResults.rssiData!=None:
+                #Create the table description based on the scan options
+                #TODO: Right now we assume that the scan options will never change!!!!
+                scanTableDesc={'ipAddr':tb.StringCol(13),
+                               'isAlive':tb.BoolCol(1),
+                               'freqStart':tb.Float32Col(1),
+                               'freqStop':tb.Float32Col(1),
+                               'freqRes':tb.Float32Col(1),
+                               'timestamp':tb.Time64Col(1),
+                               'rssiData':tb.Int32Col(shape=(len(scanResults.rssiData),))}
+            
             
             #Obtain the table associated with the node IP address 
             #or create it if it doesn't exist
@@ -73,20 +74,32 @@ class H5ScannerThread(threading.Thread):
             else:
                 tableName=self.nodeDict[str(scanResults.clientAddr)]
                 table=self.h5File.getNode(self.h5Group, tableName)
-                
-            #Store the scan data in the table
-            row=table.row
-            row['ipAddr']=str(scanResults.clientAddr)
-            row['isAlive']=True
-            row['freqStart']=scanOpt.startFreqMhz + scanOpt.startFreqKhz/1000.0
-            row['freqStop']=scanOpt.stopFreqMhz + scanOpt.stopFreqKhz/1000.0
-            row['freqRes']=scanOpt.freqResolution
-            row['timestamp']=time.time()
-            row['rssiData']=scanResults.rssiData
+                #Check if the node was active in the last write operation
+                #and if not reset it
+                if table.nrows>0 and not table.cols.isAlive[0]:
+                    table.remove()
+                    table=self.h5File.createTable(self.h5Group, tableName, scanTableDesc, "Node with the IP " + str(scanResults.clientAddr))
             
-            #Save the changes
-            row.append()
-            table.flush()
+            
+            #If no RSSI data was included in the queue, we assume the board to be inactive
+            if scanResults.rssiData==None:
+                for row in table:
+                    row['isAlive']=False
+                    row.update()
+            else:                                
+                scanOpt=self.ScanOptions(*scanResults.recvOpt)
+                row=table.row
+                #Store the scan data in the table
+                row['ipAddr']=str(scanResults.clientAddr)
+                row['isAlive']=True
+                row['freqStart']=scanOpt.startFreqMhz + scanOpt.startFreqKhz/1000.0
+                row['freqStop']=scanOpt.stopFreqMhz + scanOpt.stopFreqKhz/1000.0
+                row['freqRes']=scanOpt.freqResolution
+                row['timestamp']=time.time()
+                row['rssiData']=scanResults.rssiData
+                #Save the changes
+                row.append()
+                table.flush()
         
         #Close the H5 file before exit    
         self.h5File.close()

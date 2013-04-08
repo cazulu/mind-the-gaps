@@ -75,7 +75,7 @@ class UdpScannerServer(threading.Thread):
 	
 	def sigint_handler(self,signum,stack):
 		self.alive.clear()
-		print "Ctrl-C detected, closing all the related threads and H5 files"
+		print "\nCtrl-C detected, closing all the related threads and H5 files"
 		for clientAddr in self.clientDict:
 			self.clientDict[clientAddr].udpChunkQueue.put('exit')
 		#Send the exit message to the H5 thread through the queue
@@ -108,8 +108,8 @@ class UdpScannerSM(threading.Thread):
 		self.recvScanOptions=self.defaultScanOptions
 		#The payload format will be defined once we know the full length of the message
 		self.dataPayloadFormat=""
-		#If we hear nothing from the board in 1 second, we close the state machine
-		self.maxSilentWait=1.0
+		#If we hear nothing from the board in 5 seconds, we close the state machine
+		self.maxSilentWait=5.0
 		
 		#SM parameters
 		self.udpScanState=self.protIdle
@@ -223,6 +223,8 @@ class UdpScannerSM(threading.Thread):
 			try:
 				newDataChunk=self.udpChunkQueue.get(block=True, timeout=self.maxSilentWait)
 			except Queue.Empty, e:
+				#Inform the H5 backend about the timeout by sending None in place of the rssi array
+				self.scanDataQueue.put(self.ScanResults(clientAddr=self.clientAddr, recvOpt=None, rssiData=None))
 				self.join()
 			else:
 				#Check if we received the exit message
