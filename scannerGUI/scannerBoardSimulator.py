@@ -29,6 +29,7 @@ parser.add_argument("-r", "--freqResolution", help="Frequency resolution of the 
 parser.add_argument("-d", "--dstIP", help="IP address of the UDP frequency scanning server", default=DFLT_DST_IP, metavar="dstIP")
 parser.add_argument("-s", "--srcIP", help="Source IP address of the UDP frequency scanning packets", default=DFLT_SRC_IP, metavar="srcIP")
 parser.add_argument("-w", "--packetWait", help="Delay between UDP packets in ms", type=int, default=DFLT_PKT_DELAY, metavar="delay")
+parser.add_argument("-n", "--packetLimit", help="Number of packets to send", type=int)
 args=parser.parse_args()
 
 #Check syntax of parameters
@@ -74,7 +75,9 @@ testScanOptions = ScanOptions(startFreqMhz=int(startFreq), startFreqKhz=int((sta
 				freqResolution=freqResolution, modFormat=3, activateAGC=1, agcLnaGain=0, \
 				agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
 
-while True:
+pktSent=0
+
+while args.packetLimit==None or pktSent<args.packetLimit:
 	print "Generating data"
 	#Randomize the frequency range if the --randomizeRange parameter is set
 	if args.randRange and time.time()-randTimer>=DFLT_RAND_DELAY:
@@ -99,17 +102,19 @@ while True:
 	#Add the data payload
 	packed_data += struct.pack(dataPayloadFormat, *rssiValuesDec)
 	#Send the data using the scapy library if IP source spoofing is needed, otherwise use a normal socket
-	if args.srcIP!=DFLT_SRC_IP:
-			conf.L3socket = L3RawSocket
-			ipPkt=IP(src=args.srcIP, dst=args.dstIP)
-			udpPkt=UDP(sport=SRC_PORT, dport=DST_PORT)
-			pkt=ipPkt/udpPkt/packed_data
-			send(pkt)
-	else:
+	if args.srcIP==DFLT_SRC_IP:
 		bytesToSend=pkgLen
 		print "Sending data: ", amtRssiValues, " RSSI values"
-    	while bytesToSend>0:
-        	bytesToSend-=sock.sendto(packed_data, (args.dstIP,DST_PORT))
+		while bytesToSend>0:
+			bytesToSend-=sock.sendto(packed_data, (args.dstIP,DST_PORT))
 		print "Data sent"
+	else:
+		conf.L3socket = L3RawSocket
+		ipPkt=IP(src=args.srcIP, dst=args.dstIP)
+		udpPkt=UDP(sport=SRC_PORT, dport=DST_PORT)
+		pkt=ipPkt/udpPkt/packed_data
+		send(pkt)
+	pktSent+=1
+
 	time.sleep(args.packetWait/1000.0)
     

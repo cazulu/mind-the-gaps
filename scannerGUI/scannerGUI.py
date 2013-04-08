@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use('WXAgg')
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_wxagg import \
-    FigureCanvasWxAgg as FigCanvas
+    FigureCanvasWxAgg as FigureCanvas
 import numpy as np
 
 # Define notification event for the arrival of new data
@@ -388,233 +388,62 @@ class RssiTimingControlBox(wx.Panel):
         self.rssiWait = self.rssiWait_text.GetValue()
         print "New rssiWait value: ", self.rssiWait
         
-class ScannerPlotTab(wx.Panel):
-    '''
-    Class that creates a panel where the frequency scanning results of a SINGLE board are plotted 
-    '''
-    def __init__(self):
-        wx.Panel.__init__(self, parent=parent, id=wx.ID_ANY)
+class ScannerPlotPanel(wx.Panel):
+    def __init__(self, parent):
+        wx.Panel.__init__(self, 
+                          parent,
+                          wx.ID_ANY,
+                          wx.DefaultPosition,
+                          wx.DefaultSize,
+                          wx.TAB_TRAVERSAL)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        self.fig = Figure()
+        self.axes = self.fig.add_subplot(111)
+        self.pts = self.axes.plot([1, 2, 3], [4, 5, 7], 'ro-', picker=5)
+        self.canvas = FigureCanvas(self, -1, self.fig)
+
+        sizer.Add(self.canvas, 1, wx.ALL|wx.EXPAND, 5)
+
+        self.SetSizer(sizer)
+        self.Layout()
+        sizer.Fit(self)
         
-        self.data = np.arange(779, 928)
-        self.maxData = self.data
-        self.avgData = self.data
-        self.minData = self.data
-        self.amtRecvArrays=0
-        self.scannerAddr=("127.0.0.1",60000)
+class ScannerNotebook(wx.Notebook):
+    def __init__(self, parent):
+        wx.Notebook.__init__(self,
+                             parent,
+                             wx.ID_ANY,
+                             wx.DefaultPosition,
+                             wx.DefaultSize,
+                             wx.NB_TOP)
+
+        self.panel=ScannerPlotPanel(self)
+        self.AddPage(self.panel, u"a page", False)
         
-        self.ScanOptions = collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
-                                                  stopFreqMhz stopFreqKhz freqResolution modFormat activateAGC \
-                                                  agcLnaGain agcLna2Gain agcDvgaGain rssiWait')
-        self.defaultScanOptions = self.ScanOptions(startFreqMhz=779, startFreqKhz=0, stopFreqMhz=928, stopFreqKhz=0,
-                                                freqResolution=203, modFormat=3, activateAGC=1, agcLnaGain=0,
-                                                agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
-        self.recvScanOptions=self.defaultScanOptions
-        self.prevRecvScanOptions=self.defaultScanOptions
-        
-        #Plotting values
-        self.yMin=-90
-        self.yMax=0
+
+class ScannerGUI(wx.Frame):
+    def __init__(self, parent):
+        wx.Frame.__init__(self,
+                          parent,
+                          id=wx.ID_ANY,
+                          pos=wx.DefaultPosition,
+                          size=wx.Size( -1,-1 ),
+                          style=wx.DEFAULT_FRAME_STYLE|wx.TAB_TRAVERSAL)
         
         self.create_menu()
         self.create_status_bar()
         
-        #Timer that registers the time of the last replot
-        self.paintTimer=time.time()
-        #Timer that registers the time of the last reset of the average
-        self.avgResetTimer=time.time()
-        #self.redraw_timer = wx.Timer(self)
-        #self.Bind(wx.EVT_TIMER, self.on_redraw_timer, self.redraw_timer)        
-        #self.redraw_timer.Start(100)
-        #y-axis range of the plot
+        sizer = wx.FlexGridSizer(0, 1, 0, 0)
+        
+        self.scannerNotebook=ScannerNotebook(self)
+        sizer.Add(self.scannerNotebook, 1, wx.EXPAND |wx.ALL, 5)
 
-        self.init_plot()
-        self.canvas = FigCanvas(self.panel, -1, self.fig)
+        self.SetSizer(sizer)
+        self.Layout()
+        sizer.Fit(self)
 
-        self.freqRange_control = FreqControlBox(self.panel, -1, "Frequency range")
-        
-        self.modulation_control = ModControlBox(self.panel, -1, "Modulation")
-        
-        self.gain_control =  GainControlBox(self.panel, -1, "Gain")
-        
-        self.rssiTiming_control = RssiTimingControlBox(self.panel, -1, "RSSI timing")
-        
-        self.yRange_control=RangeControlBox(self.panel, -1, "Y range", self)
-        self.yRange_control.Disable()
-        
-        self.txScanOptions_button = wx.Button(self.panel, -1, "Send scan options")
-        self.Bind(wx.EVT_BUTTON, self.on_txScanOptions_button, self.txScanOptions_button)
-        
-        self.cb_grid = wx.CheckBox(self.panel, -1, 
-            "Show Grid",
-            style=wx.ALIGN_RIGHT)
-        self.Bind(wx.EVT_CHECKBOX, self.on_cb_grid, self.cb_grid)
-        self.cb_grid.SetValue(False)
-        
-        self.cb_yAutoRange = wx.CheckBox(self.panel, -1, 
-           "y-axis auto range",
-            style=wx.ALIGN_RIGHT)
-        self.Bind(wx.EVT_CHECKBOX, self.on_cb_yAutoRange, self.cb_yAutoRange)
-        self.cb_yAutoRange.SetValue(True)
-        
-        self.hbox1 = wx.BoxSizer(wx.HORIZONTAL)
-        self.hbox1.Add(self.txScanOptions_button, border=5, flag=wx.ALL | wx.ALIGN_CENTER_VERTICAL)
-        self.hbox1.AddSpacer(20)
-        self.hbox1.Add(self.cb_grid, border=5, flag=wx.ALL | wx.ALIGN_CENTER_VERTICAL)
-        self.hbox1.Add(self.cb_yAutoRange, border=5, flag=wx.ALL | wx.ALIGN_CENTER_VERTICAL)
-        
-        self.hbox2 = wx.BoxSizer(wx.HORIZONTAL)
-        self.hbox2.Add(self.freqRange_control, border=5, flag=wx.ALL)
-        self.hbox2.Add(self.modulation_control, border=5, flag=wx.ALL)
-        self.hbox2.Add(self.gain_control, border=5, flag=wx.ALL)
-        self.hbox2.Add(self.rssiTiming_control, border=5, flag=wx.ALL)
-        self.hbox2.Add(self.yRange_control, border=5, flag=wx.ALL)
-        
-        self.vbox = wx.BoxSizer(wx.VERTICAL)
-        self.vbox.Add(self.canvas, 1, flag=wx.LEFT | wx.TOP | wx.EXPAND)        
-        self.vbox.Add(self.hbox1, 0, flag=wx.ALIGN_LEFT | wx.TOP)
-        self.vbox.Add(self.hbox2, 0, flag=wx.ALIGN_LEFT | wx.TOP)
-        
-        self.panel.SetSizer(self.vbox)
-        self.vbox.Fit(self)
-        
-    def init_plot(self):
-        self.dpi = 100
-        self.fig = Figure(dpi=self.dpi)
-        self.fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95)
-
-        self.axes = self.fig.add_subplot(111)
-        self.axes.tick_params(axis='both', labelsize='small')
-        self.axes.set_axis_bgcolor('white')
-        self.axes.set_title("Frequency scan results", size='medium')
-        self.axes.set_ylabel("RSSI(dBm)", size='medium', labelpad=10)
-        self.axes.set_xlabel("Frequency(MHz)", size='medium', labelpad=10)
-        
-        # plot the data as a line series, and save the reference 
-        # to the plotted line series
-        #
-        self.plot_maxData = self.axes.plot(
-            self.maxData, 
-            linewidth=1,
-            color='r',
-            )[0]
-        self.plot_avgData = self.axes.plot(
-            self.avgData, 
-            linewidth=1,
-            color='g',
-            )[0]
-        self.plot_minData = self.axes.plot(
-            self.minData, 
-            linewidth=1,
-            color='b',
-            )[0]
-        
-        self.axes.legend(('Max', 'Avg', 'Min'), 'lower right', shadow=False, fontsize='small', frameon=True)
-
-    def draw_plot(self):
-        """ Redraws the plot
-        """
-        # for ymin and ymax, find the minimal and maximal values
-        # in the data set and add a mininal margin
-        # if the auto range option is checked, otherwise
-        # use the user-provided values
-        if self.cb_yAutoRange.IsChecked():
-            ymin = round(min(self.minData)) - 1
-            ymax = round(max(self.maxData)) + 1
-        else:
-            ymin = self.yRange_control.yMin
-            ymax = self.yRange_control.yMax
-
-        self.axes.set_ybound(lower=ymin, upper=ymax)
-        
-        # anecdote: axes.grid assumes b=True if any other flag is
-        # given even if b is set to False.
-        # so just passing the flag into the first statement won't
-        # work.
-        #
-        if self.cb_grid.IsChecked():
-            self.axes.grid(True, color='gray')
-        else:
-            self.axes.grid(False)
-            
-        #Calculate the x-axis values based on the scan options
-        startFreq=self.recvScanOptions.startFreqMhz+self.recvScanOptions.startFreqKhz/1000
-        stopFreq=self.recvScanOptions.stopFreqMhz+self.recvScanOptions.stopFreqKhz/1000
-        freqValues=np.linspace(startFreq, stopFreq, len(self.data))
-        
-        self.axes.set_xbound(lower=startFreq, upper=stopFreq)
-        
-        self.plot_maxData.set_xdata(freqValues)
-        self.plot_maxData.set_ydata(self.maxData)
-        
-        self.plot_avgData.set_xdata(freqValues)
-        self.plot_avgData.set_ydata(self.avgData)
-        
-        self.plot_minData.set_xdata(freqValues)
-        self.plot_minData.set_ydata(self.minData)
-        
-        self.canvas.draw()
-        #Store the time of the last redraw, useful to prevent GUI overload
-        self.paintTimer=time.time()
-        
-    def on_new_rssi_data(self, msg):
-        if not self.dataQueue.empty():
-            self.data=self.dataQueue.get()
-            self.prevRecvScanOptions=self.recvScanOptions
-            self.recvScanOptions=self.recvOptQueue.get()
-            self.scannerAddr=self.addrQueue.get()
-            
-            #If the scan options have changed, reset the data vectors
-            if self.recvScanOptions!=self.prevRecvScanOptions or self.amtRecvArrays<=0:
-                self.amtRecvArrays=1
-                self.maxData=self.data
-                self.avgData=self.data
-                self.minData=self.data
-                self.avgResetTimer=time.time()
-            else:
-                self.amtRecvArrays+=1
-                self.avgData=np.average([self.avgData, self.data], axis=0, weights=[self.amtRecvArrays-1, 1])
-                #TODO: Make the averaging reset timer user-defined
-                #If a lot of time(for now, 10s) has passed since the last reset of the averaging
-                #or too many arrays have been received(for now, 1000), reset again
-                if time.time()-self.avgResetTimer>100 or self.amtRecvArrays>10000:
-                    self.amtRecvArrays=0
-                #Check if any values have to go into the max and min vectors
-                self.maxData=np.amax([self.data, self.maxData], axis=0)
-                self.minData=np.amin([self.data, self.minData], axis=0)
-            #Replot the data if more than 100ms have passed since the last time
-            #This prevents the GUI from becoming unresponsive
-            if time.time()-self.paintTimer>0.1:
-                print "\n\n****Plotting data....****\n\n"
-                self.draw_plot()
-                
-class ScannerNotebook(wx.Notebook):
-    '''
-    Class that contains all the tabs for the controls and the plots of the 
-    data of each board
-    '''
-    def __init__(self):
-        wx.Notebook.__init__(self, parent, id=wx.ID_ANY, style=wx.BK_DEFAULT)
-        
-        #Set up the event that tells us of the appearance of a new client
-        EVT_RESULT(self, self.on_new_scanner_client)
-        
-        #Namedtuple format to input data into the queue of the graphical interface 
-        self.ScanResults=collections.namedtuple('Scan results', 'clientAddr', 'recvOpt', 'rssiData')
-        print "Starting UDP server..."
-        #Start the UDP backend
-        self.udpScanner = UdpScannerApp(self, EVT_RESULT_ID)
-        
-        
-        
-        
-        #Create the first tab
-        #TODO: The controls should be in a separate tab from the graphs,
-        #and each graph tab should be created on demand when a new client arrives
-
-class ScannerGUI(wx.Frame):
-    title = "GUI for the frequency scanning protocol"
-    def __init__(self):
-        wx.Frame.__init__(self, None, -1, self.title)
+        self.Centre(wx.BOTH)
         
     def create_menu(self):
         self.menubar = wx.MenuBar()
@@ -625,52 +454,13 @@ class ScannerGUI(wx.Frame):
         menu_file.AppendSeparator()
         m_exit = menu_file.Append(-1, "E&xit\tCtrl-X", "Exit")
         self.Bind(wx.EVT_MENU, self.on_exit, m_exit)
+        self.Bind(wx.EVT_CLOSE, self.on_exit)
                 
         self.menubar.Append(menu_file, "&File")
         self.SetMenuBar(self.menubar)
     
     def create_status_bar(self):
         self.statusbar = self.CreateStatusBar()
-
-    
-    #
-    def on_txScanOptions_button(self, event):
-        '''
-        When this button is clicked, we start a thread that sends
-        the new scanning options to the microcontroller platform
-        :param event: Button click event
-        '''
-        #Gather all the options into a single ScanOptions namedtuple
-        guiStartFreqMhz=int(float(self.freqRange_control.startFreq))
-        guiStartFreqKhz=int((float(self.freqRange_control.startFreq) - guiStartFreqMhz)*1000)
-        guiStopFreqMhz=int(float(self.freqRange_control.stopFreq))
-        guiStopFreqKhz=int((float(self.freqRange_control.stopFreq) - guiStopFreqMhz)*1000)
-        guiFreqResolution=int(float(self.freqRange_control.freqResolution))
-        guiModFormat=self.modulation_control.modFormat_protValue
-        if self.gain_control.agcEnable_cb.IsChecked():
-            guiActivateAgc=1
-        else:
-            guiActivateAgc=0
-        guiLnaGain=self.gain_control.lnaGain
-        guiLna2Gain=self.gain_control.lna2Gain
-        guiDvgaGain=self.gain_control.dvgaGain
-        guiRssiWait=int(self.rssiTiming_control.rssiWait)
-        self.guiScanOptions = self.ScanOptions(startFreqMhz=guiStartFreqMhz, startFreqKhz=guiStartFreqKhz, stopFreqMhz=guiStopFreqMhz, stopFreqKhz=guiStopFreqKhz, \
-                                         freqResolution=guiFreqResolution, modFormat=guiModFormat, activateAGC=guiActivateAgc, agcLnaGain=guiLnaGain, \
-                                         agcLna2Gain=guiLna2Gain, agcDvgaGain=guiDvgaGain, rssiWait=guiRssiWait)
-        
-        #Start the client thread to send the options
-        self.udpScannerClient=UdpScannerClient(self.scannerAddr, self.guiScanOptions)
-    
-    def on_cb_grid(self, event):
-        self.draw_plot()
-        
-    def on_cb_yAutoRange(self, event):
-        if self.cb_yAutoRange.IsChecked():
-            self.yRange_control.Disable()
-        else:
-            self.yRange_control.Enable()    
-        self.draw_plot()
     
     def on_save_plot(self, event):
         file_choices = "PNG (*.png)|*.png"
@@ -686,14 +476,11 @@ class ScannerGUI(wx.Frame):
         
         if dlg.ShowModal() == wx.ID_OK:
             path = dlg.GetPath()
-            self.canvas.print_figure(path, dpi=self.dpi)
+            self.canvas.print_figure(path)
             self.flash_status_message("Saved to %s" % path)
-    
-    def on_redraw_timer(self, event):
-        self.draw_plot()
         
     def on_exit(self, event):
-        self.udpScanner.join(None)
+        self.scanNotebook.close_backend()
         self.Destroy()
     
     def flash_status_message(self, msg, flash_len_ms=1500):
@@ -708,9 +495,388 @@ class ScannerGUI(wx.Frame):
     def on_flash_status_off(self, event):
         self.statusbar.SetStatusText('')
         
+        
+#class ScannerPlotTab(wx.Panel):
+#    '''
+#    Class that creates a panel where the frequency scanning results of a SINGLE board are plotted 
+#    '''
+#    def __init__(self, parent, scanQueue, plotEnabled):
+#        '''
+#        Initialize the tab
+#        :param parent: Notebook that creates the tab
+#        :param scanQueue: Queue that contains the scanning data stored as ScanResult namedtuples
+#        :param plotEnabled: Bool that controls whether plotting should be enabled from the start
+#        '''
+#        self.scanQueue = scanQueue
+#        self.plotEnabled = plotEnabled
+#        wx.Panel.__init__(self, parent=parent, id=wx.ID_ANY)
+#        
+#        self.data = np.arange(779, 928)
+#        self.maxData = self.data
+#        self.avgData = self.data
+#        self.minData = self.data
+#        self.amtRecvArrays=0
+#        self.scannerAddr=("127.0.0.1",60000)
+#        
+#        #Namedtuple format to input data into the queue of the graphical interface 
+#        self.ScanResults=collections.namedtuple('ScanResult', 'clientAddr recvOpt rssiData')
+#        
+#        self.ScanOptions = collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
+#                                                  stopFreqMhz stopFreqKhz freqResolution modFormat activateAGC \
+#                                                  agcLnaGain agcLna2Gain agcDvgaGain rssiWait')
+#        self.defaultScanOptions = self.ScanOptions(startFreqMhz=779, startFreqKhz=0, stopFreqMhz=928, stopFreqKhz=0,
+#                                                freqResolution=203, modFormat=3, activateAGC=1, agcLnaGain=0,
+#                                                agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
+#        self.recvScanOptions=self.defaultScanOptions
+#        self.prevRecvScanOptions=self.defaultScanOptions
+#        
+#        #Plotting values
+#        self.yMin=-90
+#        self.yMax=0
+#        
+#        #Timer that registers the time of the last replot
+#        self.paintTimer=time.time()
+#        #Timer that registers the time of the last reset of the average
+#        self.avgResetTimer=time.time()
+#        #self.redraw_timer = wx.Timer(self)
+#        #self.Bind(wx.EVT_TIMER, self.on_redraw_timer, self.redraw_timer)        
+#        #self.redraw_timer.Start(100)
+#        #y-axis range of the plot
+#
+#        self.init_plot()
+#        self.canvas = FigCanvas(self, -1, self.fig)
+#
+##        self.freqRange_control = FreqControlBox(self, -1, "Frequency range")
+##        
+##        self.modulation_control = ModControlBox(self, -1, "Modulation")
+##        
+##        self.gain_control =  GainControlBox(self, -1, "Gain")
+##        
+##        self.rssiTiming_control = RssiTimingControlBox(self, -1, "RSSI timing")
+##        
+##        self.yRange_control=RangeControlBox(self, -1, "Y range", self)
+##        self.yRange_control.Disable()
+##        
+##        self.txScanOptions_button = wx.Button(self, -1, "Send scan options")
+##        self.Bind(wx.EVT_BUTTON, self.on_txScanOptions_button, self.txScanOptions_button)
+#        
+##        self.cb_grid = wx.CheckBox(self, -1, 
+##            "Show Grid",
+##            style=wx.ALIGN_RIGHT)
+##        self.Bind(wx.EVT_CHECKBOX, self.on_cb_grid, self.cb_grid)
+##        self.cb_grid.SetValue(False)
+#        
+##        self.cb_yAutoRange = wx.CheckBox(self, -1, 
+##           "y-axis auto range",
+##            style=wx.ALIGN_RIGHT)
+##        self.Bind(wx.EVT_CHECKBOX, self.on_cb_yAutoRange, self.cb_yAutoRange)
+##        self.cb_yAutoRange.SetValue(True)
+#        
+##        self.hbox1 = wx.BoxSizer(wx.HORIZONTAL)
+##        self.hbox1.Add(self.txScanOptions_button, border=5, flag=wx.ALL | wx.ALIGN_CENTER_VERTICAL)
+##        self.hbox1.AddSpacer(20)
+##        self.hbox1.Add(self.cb_grid, border=5, flag=wx.ALL | wx.ALIGN_CENTER_VERTICAL)
+##        self.hbox1.Add(self.cb_yAutoRange, border=5, flag=wx.ALL | wx.ALIGN_CENTER_VERTICAL)
+#        
+##        self.hbox2 = wx.BoxSizer(wx.HORIZONTAL)
+##        self.hbox2.Add(self.freqRange_control, border=5, flag=wx.ALL)
+##        self.hbox2.Add(self.modulation_control, border=5, flag=wx.ALL)
+##        self.hbox2.Add(self.gain_control, border=5, flag=wx.ALL)
+##        self.hbox2.Add(self.rssiTiming_control, border=5, flag=wx.ALL)
+##        self.hbox2.Add(self.yRange_control, border=5, flag=wx.ALL)
+#        
+#        self.vbox = wx.BoxSizer(wx.VERTICAL)
+#        self.vbox.Add(self.canvas, 1, flag=wx.LEFT | wx.TOP | wx.EXPAND)        
+##        self.vbox.Add(self.hbox1, 0, flag=wx.ALIGN_LEFT | wx.TOP)
+##        self.vbox.Add(self.hbox2, 0, flag=wx.ALIGN_LEFT | wx.TOP)
+#        
+#        self.SetSizer(self.vbox)
+#        self.Layout()
+#        self.vbox.Fit(self)
+#        
+#    def init_plot(self):
+#        self.dpi = 100
+#        self.fig = Figure(dpi=self.dpi)
+#        self.fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95)
+#
+#        self.axes = self.fig.add_subplot(111)
+#        self.axes.tick_params(axis='both', labelsize='small')
+#        self.axes.set_axis_bgcolor('white')
+#        self.axes.set_title("Frequency scan results", size='medium')
+#        self.axes.set_ylabel("RSSI(dBm)", size='medium', labelpad=10)
+#        self.axes.set_xlabel("Frequency(MHz)", size='medium', labelpad=10)
+#        
+#        # plot the data as a line series, and save the reference 
+#        # to the plotted line series
+#        #
+#        self.plot_maxData = self.axes.plot(
+#            self.maxData, 
+#            linewidth=1,
+#            color='r',
+#            )[0]
+#        self.plot_avgData = self.axes.plot(
+#            self.avgData, 
+#            linewidth=1,
+#            color='g',
+#            )[0]
+#        self.plot_minData = self.axes.plot(
+#            self.minData, 
+#            linewidth=1,
+#            color='b',
+#            )[0]
+#        
+#        self.axes.legend(('Max', 'Avg', 'Min'), 'lower right', shadow=False, fontsize='small', frameon=True)
+#
+#    def draw_plot(self):
+#        """ Redraws the plot
+#        """
+#        # for ymin and ymax, find the minimal and maximal values
+#        # in the data set and add a mininal margin
+#        # if the auto range option is checked, otherwise
+#        # use the user-provided values
+#        if self.cb_yAutoRange.IsChecked():
+#            ymin = round(min(self.minData)) - 1
+#            ymax = round(max(self.maxData)) + 1
+#        else:
+#            ymin = self.yRange_control.yMin
+#            ymax = self.yRange_control.yMax
+#
+#        self.axes.set_ybound(lower=ymin, upper=ymax)
+#        
+#        # anecdote: axes.grid assumes b=True if any other flag is
+#        # given even if b is set to False.
+#        # so just passing the flag into the first statement won't
+#        # work.
+#        #
+#        if self.cb_grid.IsChecked():
+#            self.axes.grid(True, color='gray')
+#        else:
+#            self.axes.grid(False)
+#            
+#        #Calculate the x-axis values based on the scan options
+#        startFreq=self.recvScanOptions.startFreqMhz+self.recvScanOptions.startFreqKhz/1000
+#        stopFreq=self.recvScanOptions.stopFreqMhz+self.recvScanOptions.stopFreqKhz/1000
+#        freqValues=np.linspace(startFreq, stopFreq, len(self.data))
+#        
+#        self.axes.set_xbound(lower=startFreq, upper=stopFreq)
+#        
+#        self.plot_maxData.set_xdata(freqValues)
+#        self.plot_maxData.set_ydata(self.maxData)
+#        
+#        self.plot_avgData.set_xdata(freqValues)
+#        self.plot_avgData.set_ydata(self.avgData)
+#        
+#        self.plot_minData.set_xdata(freqValues)
+#        self.plot_minData.set_ydata(self.minData)
+#        
+#        self.canvas.draw()
+#        #Store the time of the last redraw, useful to prevent GUI overload
+#        self.paintTimer=time.time()
+#        
+#    def enable_plot(self):
+#        self.plotEnabled=True
+#        
+#    def disable_plot(self):
+#        self.plotEnabled=False
+#        
+#    def process_rssi_data(self):
+#        while not self.scanQueue.empty():
+#            scanResults=self.ScanResults(*self.scanQueue.get())
+#            self.data=scanResults.rssiData
+#            self.prevRecvScanOptions=self.recvScanOptions
+#            self.recvScanOptions=scanResults.recvOpt
+#            self.scannerAddr=scanResults.clientAddr
+#            
+#            #If the scan options have changed, reset the data vectors
+#            if self.recvScanOptions!=self.prevRecvScanOptions or self.amtRecvArrays<=0:
+#                self.amtRecvArrays=1
+#                self.maxData=self.data
+#                self.avgData=self.data
+#                self.minData=self.data
+#                self.avgResetTimer=time.time()
+#            else:
+#                self.amtRecvArrays+=1
+#                self.avgData=np.average([self.avgData, self.data], axis=0, weights=[self.amtRecvArrays-1, 1])
+#                #TODO: Make the averaging reset timer user-defined
+#                #If a lot of time(for now, 10s) has passed since the last reset of the averaging
+#                #or too many arrays have been received(for now, 1000), reset again
+#                if time.time()-self.avgResetTimer>100 or self.amtRecvArrays>10000:
+#                    self.amtRecvArrays=0
+#                #Check if any values have to go into the max and min vectors
+#                self.maxData=np.amax([self.data, self.maxData], axis=0)
+#                self.minData=np.amin([self.data, self.minData], axis=0)
+#            #Replot the data if more than 100ms have passed since the last time
+#            #This prevents the GUI from becoming unresponsive
+#            if time.time()-self.paintTimer>0.1 and self.plotEnabled:
+#                print "\n\n****Plotting data....****\n\n"
+#                self.draw_plot()
+#                
+#    def on_txScanOptions_button(self, event):
+#        '''
+#        When this button is clicked, we start a thread that sends
+#        the new scanning options to the microcontroller platform
+#        :param event: Button click event
+#        '''
+#        #Gather all the options into a single ScanOptions namedtuple
+#        guiStartFreqMhz=int(float(self.freqRange_control.startFreq))
+#        guiStartFreqKhz=int((float(self.freqRange_control.startFreq) - guiStartFreqMhz)*1000)
+#        guiStopFreqMhz=int(float(self.freqRange_control.stopFreq))
+#        guiStopFreqKhz=int((float(self.freqRange_control.stopFreq) - guiStopFreqMhz)*1000)
+#        guiFreqResolution=int(float(self.freqRange_control.freqResolution))
+#        guiModFormat=self.modulation_control.modFormat_protValue
+#        if self.gain_control.agcEnable_cb.IsChecked():
+#            guiActivateAgc=1
+#        else:
+#            guiActivateAgc=0
+#        guiLnaGain=self.gain_control.lnaGain
+#        guiLna2Gain=self.gain_control.lna2Gain
+#        guiDvgaGain=self.gain_control.dvgaGain
+#        guiRssiWait=int(self.rssiTiming_control.rssiWait)
+#        self.guiScanOptions = self.ScanOptions(startFreqMhz=guiStartFreqMhz, startFreqKhz=guiStartFreqKhz, stopFreqMhz=guiStopFreqMhz, stopFreqKhz=guiStopFreqKhz, \
+#                                         freqResolution=guiFreqResolution, modFormat=guiModFormat, activateAGC=guiActivateAgc, agcLnaGain=guiLnaGain, \
+#                                         agcLna2Gain=guiLna2Gain, agcDvgaGain=guiDvgaGain, rssiWait=guiRssiWait)
+#        
+#        #Start the client thread to send the options
+#        self.udpScannerClient=UdpScannerClient(self.scannerAddr, self.guiScanOptions)
+#        
+#    def print_figure(self, path):
+#        self.canvas.print_figure(path, dpi=self.dpi)
+#    
+#    def on_cb_grid(self, event):
+#        self.draw_plot()
+#        
+#    def on_cb_yAutoRange(self, event):
+#        if self.cb_yAutoRange.IsChecked():
+#            self.yRange_control.Disable()
+#        else:
+#            self.yRange_control.Enable()    
+#        self.draw_plot()
+#        
+#    def on_redraw_timer(self, event):
+#        self.draw_plot()
+#                
+#class ScannerNotebook(wx.Notebook):
+#    '''
+#    Class that contains all the tabs for the controls and the plots of the 
+#    data of each board, and starts the UDP backend
+#    '''
+#    def __init__(self, parent):
+#        wx.Notebook.__init__(self, parent=parent, id=wx.ID_ANY, style=wx.BK_DEFAULT)
+#        
+#        #Set up the event that tells us of the appearance of a new client
+#        EVT_RESULT(self, self.on_new_scanner_client)
+#        
+#        #Start the UDP backend
+#        print "Starting UDP server..."
+#        self.udpScanner = UdpScannerApp(self, EVT_RESULT_ID)
+#        
+#        #Create the dictionary that maps tab names and the class handler
+#        self.tabDict = {}
+#        self.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.on_page_changed)
+#    
+#    def on_new_scanner_client(self, newClientEvent):
+#        '''
+#        Function that creates a new plotting tab every time a new board arrives in the network
+#        :param newClientEvent: Class that contains the info of the new board(its IP address and data queue)
+#        '''
+#        #Create the panel that will be contained in the tab and label it with the board's IP
+#        #and switch to the newly created tab
+#        newScannerPlotTab=ScannerPlotTab(parent=self, scanQueue=newClientEvent.scanQueue, plotEnabled=True)
+#        newTabLabel=str(newClientEvent.clientAddr)
+#        self.tabDict[newTabLabel]=newScannerPlotTab
+#        self.AddPage(page=newScannerPlotTab, text=newTabLabel, select=True)
+#        
+#    def on_page_changed(self, event):
+#        #Stop plotting data on the old tab and activate the current one
+#        oldTabIndex=event.GetOldSelection()
+#        if oldTabIndex!=-1:
+#            oldTab=self.tabDict[self.GetPageText(oldTabIndex)]
+#            oldTab.disable_plot()
+#        selTab=self.tabDict[self.GetPageText(event.GetSelection())]
+#        selTab.enable_plot()
+#        event.Skip()
+#        
+#    def print_figure(self, path):
+#        '''
+#        Call the print_figure method of the canvas of the current plotting tab
+#        :param path: Filesystem path to store the figure
+#        '''
+#        selTab=self.tabDict[self.GetPageText(self.GetCurrentPage())]
+#        selTab.print_figure(path)
+#        
+#    def close_backend(self):
+#        '''
+#        Stop UDP backend
+#        '''
+#        self.udpScanner.join()
+#
+#class ScannerGUI(wx.Frame):
+#    title = "GUI for the frequency scanning protocol"
+#    def __init__(self):
+#        wx.Frame.__init__(self, None, -1, self.title)
+#        
+##        self.create_menu()
+##        self.create_status_bar()
+#        self.scanNotebook=ScannerNotebook(self)
+#        sizer = wx.BoxSizer(wx.VERTICAL)
+#        sizer.Add(self.scanNotebook, 1, wx.ALL|wx.EXPAND, 5)
+#        self.SetSizer(sizer)
+#        self.Layout()
+#        sizer.Fit(self)
+#        
+#    def create_menu(self):
+#        self.menubar = wx.MenuBar()
+#        
+#        menu_file = wx.Menu()
+#        m_expt = menu_file.Append(-1, "&Save plot\tCtrl-S", "Save plot to file")
+#        self.Bind(wx.EVT_MENU, self.on_save_plot, m_expt)
+#        menu_file.AppendSeparator()
+#        m_exit = menu_file.Append(-1, "E&xit\tCtrl-X", "Exit")
+#        self.Bind(wx.EVT_MENU, self.on_exit, m_exit)
+#        self.Bind(wx.EVT_CLOSE, self.on_exit)
+#                
+#        self.menubar.Append(menu_file, "&File")
+#        self.SetMenuBar(self.menubar)
+#    
+#    def create_status_bar(self):
+#        self.statusbar = self.CreateStatusBar()
+#    
+#    def on_save_plot(self, event):
+#        file_choices = "PNG (*.png)|*.png"
+#        defaultFileName="rssiScanPlot_capturedOn_"+datetime.datetime.now().strftime("%d-%m-%y_%H-%M")+".png"
+#        
+#        dlg = wx.FileDialog(
+#            self, 
+#            message="Save plot as...",
+#            defaultDir=os.getcwd(),
+#            defaultFile=defaultFileName,
+#            wildcard=file_choices,
+#            style=wx.SAVE)
+#        
+#        if dlg.ShowModal() == wx.ID_OK:
+#            path = dlg.GetPath()
+#            self.canvas.print_figure(path)
+#            self.flash_status_message("Saved to %s" % path)
+#        
+#    def on_exit(self, event):
+#        self.scanNotebook.close_backend()
+#        self.Destroy()
+#    
+#    def flash_status_message(self, msg, flash_len_ms=1500):
+#        self.statusbar.SetStatusText(msg)
+#        self.timeroff = wx.Timer(self)
+#        self.Bind(
+#            wx.EVT_TIMER, 
+#            self.on_flash_status_off, 
+#            self.timeroff)
+#        self.timeroff.Start(flash_len_ms, oneShot=True)
+#    
+#    def on_flash_status_off(self, event):
+#        self.statusbar.SetStatusText('')
+#        
 if __name__ == '__main__':
-    app = wx.PySimpleApp()
-    app.frame = ScannerGUI()
+    app = wx.App()
+    app.frame = ScannerGUI(None)
     app.frame.Show()
     app.MainLoop()
         

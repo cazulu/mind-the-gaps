@@ -6,40 +6,21 @@ import struct
 import collections
 import threading
 import Queue
-import wx
-import time
-import datetime
-import array
+import signal
 import numpy as np
+from scannerH5Backend import H5ScannerThread
 
-class NewClientEvent(wx.PyEvent):
-	'''
-	Event to inform the graphical interface that a new scanner client appeared
-	and convey its IP and data queue
-	'''
-	def __init__(self, evtId, clientAddr, scanQueue):
-		"""Init Result Event."""
-		wx.PyEvent.__init__(self)
-		self.SetEventType(evtId)
-		self.clientAddr = clientAddr
-		self.scanQueue = scanQueue
-
-
-class UdpScannerApp(threading.Thread):
+class UdpScannerServer(threading.Thread):
 	'''
 	Class that starts the receiver socket for the UDP protocol
 	and launches the state machine for each new board that 
 	communicates with the server
 	'''
 	
-	def __init__(self, wxObject, evtId):
+	def __init__(self):
 		'''
 		Init the UDP server back-end
-		:param wxObject: Identifier of the GUI front-end
-		:param evtId: ID of the event to inform the GUI of the arrival of new data
 		'''
-		self.wxObject = wxObject
-		self.evtId = evtId
 		
 		#Port and buffer size config
 		self.udpPort = 9930
@@ -48,11 +29,19 @@ class UdpScannerApp(threading.Thread):
 		#Dictionary that maps each active client IP address to its protocol handler
 		#and the state machine queue
 		self.clientDict={}
-		self.ClientHandler=collections.namedtuple('Client Handler', 'smQueue', 'scannerSM')
+		self.ClientHandler=collections.namedtuple('ClientHandler', 'udpChunkQueue scannerSM')
+		#Queue to pass the scan results to the H5 backend
+		self.scanDataQueue=Queue.Queue()
+		self.h5Thread=H5ScannerThread(self.scanDataQueue)
 		
 		threading.Thread.__init__(self)
 		self.alive = threading.Event()
 		self.alive.set()
+		
+		#Define a custom SIGINT handler to close all the associated threads
+		signal.signal(signal.SIGINT, self.sigint_handler)
+		
+		#Start the thread by default
 		self.start()
 	
 	def run(self):
@@ -63,29 +52,34 @@ class UdpScannerApp(threading.Thread):
 		self.sock.setblocking(False)
 		
 		while self.alive.isSet():
-			readable, _, _ = select.select([self.sock],[],[])
+			readable, _, _ = select.select([self.sock],[],[],1)
 			if self.sock in readable:
-				dataChunk, self.addr=self.sock.recvfrom(self.udpBuflen)
-				print "Received a UDP packet of",len(data),"bytes from:", self.addr
+				dataChunk, ipPortTuple=self.sock.recvfrom(self.udpBuflen)
+				self.addr=ipPortTuple[0]
+				print "Received a UDP packet of",len(dataChunk),"bytes from:", self.addr
 				#Check if this is a new client and add it to the dictionary
 				#or if the associated state machine timed out
 				if not self.clientDict.has_key(self.addr) or not self.clientDict[self.addr].scannerSM.isAlive():
 					#New client, start a protocol handler thread
-					#and create the communication queues
+					#and create the communication queue
 					udpChunkQueue=Queue.Queue()
-					scanDataQueue=Queue.Queue()
-					self.clientDict[self.addr]=self.ClientHandler(smQueue=smQueue, scannerSM=UdpScannerSM(udpChunkQueue, scanDataQueue))
-					#Inform the GUI of the good news
-					wx.PostEvent(self.wxObject, NewClientEvent(self.evtId, self.addr, scanDataQueue))
+					self.clientDict[self.addr]=self.ClientHandler(udpChunkQueue=udpChunkQueue, scannerSM=UdpScannerSM(self.addr, udpChunkQueue, self.scanDataQueue))
 				#Process the incoming UDP data
-				clientDict[self.addr].smQueue.put(dataChunk)
+				self.clientDict[self.addr].udpChunkQueue.put(dataChunk)
 		
 	def join(self, timeout=None):
 		self.alive.clear()
-		#Close all the state machine handlers
-		for clientHandler in self.clientDict:
-			clientHandler.scannerSM.join()
+		#Close all the state machine handlers and the H5 backend
+		self.sigint_handler(None, None)
 		threading.Thread.join(self, timeout)
+	
+	def sigint_handler(self,signum,stack):
+		self.alive.clear()
+		print "Ctrl-C detected, closing all the related threads and H5 files"
+		for clientHandler in self.clientDict:
+			clientHandler.udpChunkQueue.put('exit')
+		#Send the exit message to the H5 thread through the queue
+		self.scanDataQueue.put('exit')
 		
 class UdpScannerSM(threading.Thread):
 	'''
@@ -99,7 +93,7 @@ class UdpScannerSM(threading.Thread):
 		self.scanDataQueue = scanDataQueue
 		
 		#Namedtuple format to input data into the queue of the graphical interface 
-		self.ScanResults=collections.namedtuple('Scan results', 'clientAddr', 'recvOpt', 'rssiData')
+		self.ScanResults=collections.namedtuple('ScanResult', 'clientAddr recvOpt rssiData')
 		
 		#Protocol parameters
 		self.protIdentifier = "GW"
@@ -154,21 +148,21 @@ class UdpScannerSM(threading.Thread):
 		if len(self.protBuffer)>=struct.calcsize(self.protHeaderFormat):
 			protId, msgLen=struct.unpack_from(self.protHeaderFormat, bytes(self.protBuffer))
 			del self.protBuffer[:struct.calcsize(self.protHeaderFormat)]
-			print "The message protocol ID is:", protId
+			#print "The message protocol ID is:", protId
 			if protId==self.protIdentifier:
-				print "The message length is", msgLen, "bytes"
+				#print "The message length is", msgLen, "bytes"
 				if msgLen<struct.calcsize(self.optHeaderFormat):
-					print "Erroneous message length: Message length=",msgLen, " OptHeader len=", struct.calcsize(self.optHeaderFormat)
+					#print "Erroneous message length: Message length=",msgLen, " OptHeader len=", struct.calcsize(self.optHeaderFormat)
 					return self.protFail
 				#Get the amount of UINT16 RSSI values that the message contains and initialize the dataPayloadFormat string
 				self.amtRssiValues=msgLen-struct.calcsize(self.protHeaderFormat)-struct.calcsize(self.optHeaderFormat)
 				if self.amtRssiValues<=0:
-					print "Message erroneous, no RSSI data inside"
+					#print "Message erroneous, no RSSI data inside"
 					return self.protFail
 				self.dataPayloadFormat=str(self.amtRssiValues)+"b"
 				return self.protRecvOpt
 			else:
-				print "ProtId erroneous, ignoring message"
+				#print "ProtId erroneous, ignoring message"
 				return self.protFail
 		else:
 			self.msgExpected=True
@@ -179,12 +173,12 @@ class UdpScannerSM(threading.Thread):
 		if len(self.protBuffer)>=struct.calcsize(self.optHeaderFormat):
 			self.recvScanOptions=self.ScanOptions._make(struct.unpack_from(self.optHeaderFormat, bytes(self.protBuffer)))
 			del self.protBuffer[:struct.calcsize(self.optHeaderFormat)]
-			print "**Scan options received**"
+			#print "**Scan options received**"
 			startFreq=float(self.recvScanOptions.startFreqMhz) + self.recvScanOptions.startFreqKhz/1000.0
 			stopFreq=float(self.recvScanOptions.stopFreqMhz) + self.recvScanOptions.stopFreqKhz/1000.0
-			print "Start frequency(MHz):", startFreq
-			print "Stop frequency(MHz):", stopFreq
-			print "Frequency resolution(KHz):", self.recvScanOptions.freqResolution
+			#print "Start frequency(MHz):", startFreq
+			#print "Stop frequency(MHz):", stopFreq
+			#print "Frequency resolution(KHz):", self.recvScanOptions.freqResolution
 			return self.protRecvData
 		else:
 			self.msgExpected=True
@@ -193,7 +187,7 @@ class UdpScannerSM(threading.Thread):
 	def protRecvData(self):
 		#print "RECV_DATA state"
 		if len(self.protBuffer)>=struct.calcsize(self.dataPayloadFormat):
-			print "Unpacking RSSI data"
+			#print "Unpacking RSSI data"
 			rssiByteData=struct.unpack_from(self.dataPayloadFormat, bytes(self.protBuffer))
 			del self.protBuffer[:struct.calcsize(self.dataPayloadFormat)]
 			
@@ -210,17 +204,13 @@ class UdpScannerSM(threading.Thread):
 	
 	def protRecvDone(self):
 		#print "RECV_DONE state"
-		print "***Finished receiving packet***\n"
+		#print "***Finished receiving packet***\n"
 		self.msgExpected=True
 		#Pass the data to the graphical front-end as a namedtuple through the queue
-		self.scanDataQueue.put(self.ScanResults(clientAddr=self.addr, recvOpt=self.recvScanOptions, rssiData=self.rssiData))
+		self.scanDataQueue.put(self.ScanResults(clientAddr=self.clientAddr, recvOpt=self.recvScanOptions, rssiData=self.rssiData))
 		return self.protIdle
 		
 		#****SM END****
-	
-	def inputData(self, newDataChunk):
-		self.newDataChunk = newDataChunk
-		self.newDataAvailable.set()
 	
 	def run(self):
 		'''
@@ -232,11 +222,15 @@ class UdpScannerSM(threading.Thread):
 			#the timeout condition is fulfilled
 			try:
 				newDataChunk=self.udpChunkQueue.get(block=True, timeout=self.maxSilentWait)
-			except Empty, e:
+			except Queue.Empty, e:
 				self.join()
 			else:
+				#Check if we received the exit message
+				if newDataChunk=='exit':
+					self.alive.clear()
+					break
 				#Save the new data into the buffer
-				self.protBuffer.extend(self.newDataChunk)
+				self.protBuffer.extend(newDataChunk)
 				self.msgExpected=False
 				while not self.msgExpected:
 					#if self.udpScanPrevState!=self.udpScanState:
@@ -246,7 +240,7 @@ class UdpScannerSM(threading.Thread):
 	
 	def join(self, timeout=None):
 		self.alive.clear()
-		threading.Thread.join(self, timeout)
+#		threading.Thread.join(self, timeout)
 
 
 class UdpScannerClient(threading.Thread):
@@ -282,3 +276,9 @@ class UdpScannerClient(threading.Thread):
         self.sock.close()
         print "\n\n***Options sent***\n\n"
 
+if __name__ == '__main__':
+	print "Starting UDP scanner server backend"
+	t=UdpScannerServer()
+	while(t.isAlive()):
+		pass
+	
