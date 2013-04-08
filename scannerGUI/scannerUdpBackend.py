@@ -76,8 +76,8 @@ class UdpScannerServer(threading.Thread):
 	def sigint_handler(self,signum,stack):
 		self.alive.clear()
 		print "Ctrl-C detected, closing all the related threads and H5 files"
-		for clientHandler in self.clientDict:
-			clientHandler.udpChunkQueue.put('exit')
+		for clientAddr in self.clientDict:
+			self.clientDict[clientAddr].udpChunkQueue.put('exit')
 		#Send the exit message to the H5 thread through the queue
 		self.scanDataQueue.put('exit')
 		
