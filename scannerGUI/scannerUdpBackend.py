@@ -17,7 +17,7 @@ class UdpScannerServer(threading.Thread):
 	communicates with the server
 	'''
 	
-	def __init__(self):
+	def __init__(self, guiActive=False):
 		'''
 		Init the UDP server back-end
 		'''
@@ -39,7 +39,9 @@ class UdpScannerServer(threading.Thread):
 		self.alive.set()
 		
 		#Define a custom SIGINT handler to close all the associated threads
-		signal.signal(signal.SIGINT, self.sigint_handler)
+		#if there is no GUI associated to take care of that task
+		if not guiActive:
+			signal.signal(signal.SIGINT, self.sigint_hand)
 		
 		#Start the thread by default
 		self.start()
@@ -72,14 +74,21 @@ class UdpScannerServer(threading.Thread):
 		#Close all the state machine handlers and the H5 backend
 		self.sigint_handler(None, None)
 		threading.Thread.join(self, timeout)
-	
-	def sigint_handler(self,signum,stack):
+		
+	def close_backend(self):
+		'''
+		Close all threads
+		'''
+		print "Closing everything..."
 		self.alive.clear()
-		print "\nCtrl-C detected, closing all the related threads and H5 files"
 		for clientAddr in self.clientDict:
 			self.clientDict[clientAddr].udpChunkQueue.put('exit')
 		#Send the exit message to the H5 thread through the queue
 		self.scanDataQueue.put('exit')
+	
+	def sigint_handler(self,signum,stack):
+		#print "\nCtrl-C detected, closing all the related threads and H5 files"
+		self.close_backend()
 		
 class UdpScannerSM(threading.Thread):
 	'''
@@ -223,6 +232,7 @@ class UdpScannerSM(threading.Thread):
 			try:
 				newDataChunk=self.udpChunkQueue.get(block=True, timeout=self.maxSilentWait)
 			except Queue.Empty, e:
+				print "Closing the state machine..."
 				#Inform the H5 backend about the timeout by sending None in place of the rssi array
 				self.scanDataQueue.put(self.ScanResults(clientAddr=self.clientAddr, recvOpt=None, rssiData=None))
 				self.join()

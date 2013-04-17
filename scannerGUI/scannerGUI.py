@@ -2,33 +2,31 @@
 
 import os
 import sys
+import signal
 import subprocess
 import tables
 import wx
 import wx.lib.agw.aui as aui
 import wx.lib.agw.ultimatelistctrl as ULC
 import wx.lib.customtreectrl as CT
-import Queue
 import collections
 import time
 import datetime
+from scannerUdpBackend import UdpScannerServer
 
-# The recommended way to use wx with mpl is with the WXAgg
-# backend. 
-#
+# Use wx with matplotlib with the WXAgg backend. 
 import matplotlib
 matplotlib.use('WXAgg')
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_wxagg import \
-    FigureCanvasWxAgg as FigureCanvas
+    FigureCanvasWxAgg as FigureCanvas, \
+    NavigationToolbar2WxAgg as NavigationToolbar
 import numpy as np
         
 
-#Code copy-pasted from http://www.scipy.org/Matplotlib_figure_in_a_wx_panel
-class PlotPanel(wx.Panel):
+class ScanPlotPanel(wx.Panel):
     """
-    The PlotPanel has a Figure and a Canvas. OnSize events simply set a 
-    flag, and the actual resizing of the figure is triggered by an Idle event.
+    Resizable panel to represent the scan data of a single board
     """
     def __init__(self, parent):
         wx.Panel.__init__(self, parent, id=wx.ID_ANY)
@@ -39,27 +37,29 @@ class PlotPanel(wx.Panel):
         self.minData = np.arange(779, 928)
         self.freqStart=779
         self.freqStop=928
+        #Index of the last RSSI array processed
+        self.rssiIndex=0
+        #IP of the current scanner node associated with this plot
+        self.ipAddr=""
         
         self.init_plot()
-        self.canvas = FigureCanvas(self, -1, self.fig)
         self.draw_plot()
 
         #Bind the resize event to the resizing function to redraw the plot
         self.Bind(wx.EVT_SIZE, self.on_resize)
-
-    def SetColor( self, rgbtuple=None ):
-        """Set figure and canvas colours to be the same."""
-        if rgbtuple is None:
-            rgbtuple = wx.SystemSettings.GetColour( wx.SYS_COLOUR_BTNFACE ).Get()
-        clr = [c/255. for c in rgbtuple]
-        self.figure.set_facecolor( clr )
-        self.figure.set_edgecolor( clr )
-        self.canvas.SetBackgroundColour( wx.Colour( *rgbtuple ) )
         
     def init_plot(self):
-        self.dpi = 100
-        self.fig = Figure(dpi=self.dpi)
-        self.fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95)
+        #self.dpi = 200
+        self.fig = Figure(None, None)
+        self.fig.subplots_adjust(left=0.075, bottom=0.1, right=0.925)
+        self.canvas = FigureCanvas(self, -1, self.fig)
+        
+        #Set the figure and canvas background color
+        rgbtuple=wx.NamedColour("white")
+        clr = [c/255. for c in rgbtuple]
+        self.fig.set_facecolor(clr)
+        self.fig.set_edgecolor(clr)
+        self.canvas.SetBackgroundColour(wx.Colour(*rgbtuple))
 
         self.axes = self.fig.add_subplot(111)
         self.axes.tick_params(axis='both', labelsize='small')
@@ -86,9 +86,13 @@ class PlotPanel(wx.Panel):
             )[0]
         
         self.axes.legend(('Max', 'Avg', 'Min'), 'lower right', shadow=False, fontsize='small', frameon=True)
+        
+#        self.toolbar=NavigationToolbar(self.canvas)
+#        self.toolbar.Realize()
 
     def draw_plot(self):
-        """ Redraws the plot
+        """ 
+        Redraws the plot
         """
         
         ymin = round(min(self.minData)) - 1
@@ -131,11 +135,26 @@ class PlotPanel(wx.Panel):
         :param h5table: HDF5 data table identifier, see the H5Backend code
         for details on the table fields
         '''
-        self.freqStart=h5table.cols.freqStart[0]
-        self.freqStop=h5table.cols.freqStop[0]
-        self.minData=np.amin(h5table.cols.rssiData[:], axis=0)
-        self.avgData=np.mean(h5table.cols.rssiData[:], axis=0)
-        self.maxData=np.amax(h5table.cols.rssiData[:], axis=0)
+        #Reset the RSSI array index if the node to plot changed
+        #since the previous iteration
+        if self.ipAddr!=h5table.cols.ipAddr[0] \
+            or self.freqStart!=h5table.cols.freqStart[0] \
+            or self.freqStart!=h5table.cols.freqStop[0]:
+            self.rssiIndex=0
+            self.ipAddr=h5table.cols.ipAddr[0]
+            self.freqStart=h5table.cols.freqStart[0]
+            self.freqStop=h5table.cols.freqStop[0]
+        
+        if self.rssiIndex==0:
+            self.avgData=np.mean(h5table.cols.rssiData[:], axis=0)
+            self.minData=np.amin(h5table.cols.rssiData[:], axis=0)
+            self.maxData=np.amax(h5table.cols.rssiData[:], axis=0)
+        else:
+            partialAvg=np.mean(h5table.cols.rssiData[self.rssiIndex:], axis=0)
+            self.avgData=np.average(np.hstack(self.avgData, partialAvg), axis=0, weights=[self.rssiIndex, len(h5table.cols.rssiData)-self.rssiIndex])
+            self.minData=np.amin(np.hstack(self.minData, h5table.cols.rssiData[:]), axis=0)
+            self.maxData=np.amin(np.hstack(self.maxData, h5table.cols.rssiData[:]), axis=0)
+        self.rssiIndex=len(h5table.cols.rssiData[:])
         
         self.draw_plot()
             
@@ -165,7 +184,7 @@ class PlotPanel(wx.Panel):
         '''
         self.canvas.print_figure(path, dpi=self.figure.get_dpi())
             
-class MyFrame(wx.Frame):
+class ScannerGUI(wx.Frame):
     def __init__(self, parent):
         wx.Frame.__init__(self,
                           parent,
@@ -180,7 +199,7 @@ class MyFrame(wx.Frame):
         self.statusbar=self.CreateStatusBar()
         self.create_boardList()
         self.create_settingsTree()
-        self.scanPlot = PlotPanel(self)
+        self.scanPlot = ScanPlotPanel(self)
         
         self.mgr=aui.AuiManager(self)
         
@@ -202,10 +221,15 @@ class MyFrame(wx.Frame):
         #Timestamp of the last data plotted in the FigureCanvas
         self.plottedDataTimestamp=None
         
+        #Bind the handler to the SIGINT(Ctrl-C) signal
+        signal.signal(signal.SIGINT, self.on_sigint)
+        #Start the UDP backend
+        self.udpScanServer=UdpScannerServer(guiActive=True)
+        
         #Create the timer for checking the HDF5 scan data
         self.h5Timer=wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_pollh5_timer, self.h5Timer)
-        self.h5Timer.Start(1000)
+        self.h5Timer.Start(100)
         
     def create_menu(self):
         self.menubar=wx.MenuBar()
@@ -254,6 +278,7 @@ class MyFrame(wx.Frame):
         Create the TreeCtrl that handles the settings for the plot and the protocol
         '''
         self.settingsTree = CT.CustomTreeCtrl(self, agwStyle=CT.TR_DEFAULT_STYLE|CT.TR_HIDE_ROOT|CT.TR_HAS_VARIABLE_ROW_HEIGHT|CT.TR_ALIGN_WINDOWS)
+        self.settingsTree.SetBackgroundColour(wx.NamedColour("white"))
         
         root = self.settingsTree.AddRoot("Root")
         scanOptItem = self.settingsTree.AppendItem(root, "Scan options")
@@ -428,13 +453,23 @@ class MyFrame(wx.Frame):
         self.scanPlot.print_figure(path)
         self.flash_status_message("Saved to %s" % path)
         
-        
     def on_exit(self, event):
-        #TODO: Make sure to close all the threads before nuking the program
+        '''
+        Close the interface and the associated backend
+        :param event: EVT_EXIT
+        '''
+        self.exit_program()
+        
+    def on_sigint(self,signum,stack):
+        print "\nCtrl-C detected, closing the main program and associated threads..."
+        self.exit_program()
+        
+    def exit_program(self):
+        self.udpScanServer.close_backend()
         self.Destroy()
-
+        
 if __name__ == '__main__':
     app = wx.App(0)
-    frame = MyFrame(None)
+    frame = ScannerGUI(None)
     frame.Show()
     app.MainLoop()
