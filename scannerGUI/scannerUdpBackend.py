@@ -32,7 +32,9 @@ class UdpScannerServer(threading.Thread):
 		self.ClientHandler=collections.namedtuple('ClientHandler', 'udpChunkQueue scannerSM')
 		#Queue to pass the scan results to the H5 backend
 		self.scanDataQueue=Queue.Queue()
-		self.h5Thread=H5ScannerThread(self.scanDataQueue)
+		#Lock used to regulate access to the H5 file
+		self.h5FileLock=threading.Lock()
+		self.h5Thread=H5ScannerThread(self.scanDataQueue, self.h5FileLock)
 		
 		threading.Thread.__init__(self)
 		self.alive = threading.Event()
@@ -58,7 +60,7 @@ class UdpScannerServer(threading.Thread):
 			if self.sock in readable:
 				dataChunk, ipPortTuple=self.sock.recvfrom(self.udpBuflen)
 				self.addr=ipPortTuple[0]
-				print "Received a UDP packet of",len(dataChunk),"bytes from:", self.addr
+				#print "Received a UDP packet of",len(dataChunk),"bytes from:", self.addr
 				#Check if this is a new client and add it to the dictionary
 				#or if the associated state machine timed out
 				if not self.clientDict.has_key(self.addr) or not self.clientDict[self.addr].scannerSM.isAlive():
@@ -68,18 +70,14 @@ class UdpScannerServer(threading.Thread):
 					self.clientDict[self.addr]=self.ClientHandler(udpChunkQueue=udpChunkQueue, scannerSM=UdpScannerSM(self.addr, udpChunkQueue, self.scanDataQueue))
 				#Process the incoming UDP data
 				self.clientDict[self.addr].udpChunkQueue.put(dataChunk)
-		
-	def join(self, timeout=None):
-		self.alive.clear()
-		#Close all the state machine handlers and the H5 backend
-		self.sigint_handler(None, None)
-		threading.Thread.join(self, timeout)
+				
+	def get_h5_lock(self):
+		return self.h5FileLock
 		
 	def close_backend(self):
 		'''
 		Close all threads
 		'''
-		print "Closing everything..."
 		self.alive.clear()
 		for clientAddr in self.clientDict:
 			self.clientDict[clientAddr].udpChunkQueue.put('exit')
@@ -87,7 +85,7 @@ class UdpScannerServer(threading.Thread):
 		self.scanDataQueue.put('exit')
 	
 	def sigint_handler(self,signum,stack):
-		#print "\nCtrl-C detected, closing all the related threads and H5 files"
+		print "\nCtrl-C detected, closing the backend threads and the HDF5 file..."
 		self.close_backend()
 		
 class UdpScannerSM(threading.Thread):
@@ -232,7 +230,6 @@ class UdpScannerSM(threading.Thread):
 			try:
 				newDataChunk=self.udpChunkQueue.get(block=True, timeout=self.maxSilentWait)
 			except Queue.Empty, e:
-				print "Closing the state machine..."
 				#Inform the H5 backend about the timeout by sending None in place of the rssi array
 				self.scanDataQueue.put(self.ScanResults(clientAddr=self.clientAddr, recvOpt=None, rssiData=None))
 				self.join()

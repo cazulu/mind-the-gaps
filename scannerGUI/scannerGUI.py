@@ -9,8 +9,6 @@ import wx
 import wx.lib.agw.aui as aui
 import wx.lib.agw.ultimatelistctrl as ULC
 import wx.lib.customtreectrl as CT
-import collections
-import time
 import datetime
 from scannerUdpBackend import UdpScannerServer
 
@@ -225,6 +223,8 @@ class ScannerGUI(wx.Frame):
         signal.signal(signal.SIGINT, self.on_sigint)
         #Start the UDP backend
         self.udpScanServer=UdpScannerServer(guiActive=True)
+        #Get the HDF5 file lock identifier
+        self.h5FileLock=self.udpScanServer.get_h5_lock()
         
         #Create the timer for checking the HDF5 scan data
         self.h5Timer=wx.Timer(self)
@@ -334,60 +334,65 @@ class ScannerGUI(wx.Frame):
         
     def on_pollh5_timer(self, event):
         '''
-        Function triggered whenever the H5 poll timer expires.
+        Function triggered whenever the H5 poll timer expires that checks
+        the HDF5 scan data file if it's been modified since the last access
         :param event: wx.Timer event
         '''
-        if not hasattr(self, 'h5LastModified'):
-            self.h5FileLastModified=os.stat("scanData.h5").st_mtime
-        self.process_h5_data()
+        if not hasattr(self, 'h5LastModified') or self.h5LastAccessed<os.stat("scanData.h5").st_mtime:
+            self.h5FileLastAccessed=os.stat("scanData.h5").st_mtime
+            self.process_h5_data()
             
     def process_h5_data(self):
         '''
         Checks the HDF5 scan data file and updates the GUI accordingly.
         '''
         #Open the HDF5 file in read+ mode(fails if the file does not exist)
-        h5File=tables.openFile("scanData.h5", mode="r+", title="Scan data file")
-        
-        #Iterate through the node list and update the boardList pane
-        for node in h5File.root.scannerNodes:
-            #Update the node if it's already in the list
-            #and otherwise create it(FindItem returns -1 in case of failure)
-            boardIndex=self.boardList.FindItem(start=-1, str=node.cols.ipAddr[0], partial=False)
-            if boardIndex==-1:
-                ipIndex=self.boardList.InsertStringItem(sys.maxint, label=node.cols.ipAddr[0])
-                if node.cols.isAlive[0]:
-                    statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Active")
-                    self.boardList.SetItemTextColour(statIndex, wx.NamedColour("forest green"))
-                    self.flash_status_message("Detected a new active board with the IP "+node.cols.ipAddr[0])
+        with self.h5FileLock:
+            h5File=tables.openFile("scanData.h5", mode="r+", title="Scan data file")
+            
+            #Iterate through the node list and update the boardList pane
+            for node in h5File.root.scannerNodes:
+                #Make sure that the node has data
+                if len(node)<=0:
+                    continue
+                #Update the node if it's already in the list
+                #and otherwise create it(FindItem returns -1 in case of failure)
+                boardIndex=self.boardList.FindItem(start=-1, str=node.cols.ipAddr[0], partial=False)
+                if boardIndex==-1:
+                    ipIndex=self.boardList.InsertStringItem(sys.maxint, label=node.cols.ipAddr[0])
+                    if node.cols.isAlive[0]:
+                        statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Active")
+                        self.boardList.SetItemTextColour(statIndex, wx.NamedColour("forest green"))
+                        self.flash_status_message("Detected a new active board with the IP "+node.cols.ipAddr[0])
+                    else:
+                        statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Inactive")
+                        self.boardList.SetItemTextColour(statIndex, wx.NamedColour("indian red"))
+                        self.flash_status_message("Detected a new inactive board with the IP "+node.cols.ipAddr[0])
                 else:
-                    statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Inactive")
-                    self.boardList.SetItemTextColour(statIndex, wx.NamedColour("indian red"))
-                    self.flash_status_message("Detected a new inactive board with the IP "+node.cols.ipAddr[0])
-            else:
-                statItem=self.boardList.GetItem(boardIndex, col=1)
-                if node.cols.isAlive[0] and statItem.GetText()!="Active":
-                    statItem.SetText("Active")
-                    self.boardList.SetItem(statItem)
-                    self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("forest green"))
-                    self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became active")
-                elif not node.cols.isAlive[0] and statItem.GetText()!="Inactive":
-                    statItem.SetText("Inactive")
-                    self.boardList.SetItem(statItem)
-                    self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("indian red"))
-                    self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became inactive")
-                    
-                #If there is new data, update the board selected in the list,
-                #if there is none we pick the first board of the HDF5 file
-                if self.ipPlottedBoard==None:
-                    self.ipPlottedBoard=node.cols.ipAddr[0]
-                    self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
-                    self.scanPlot.update_plot(node)
-                elif self.ipPlottedBoard==node.cols.ipAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node.cols.timestamp)-1]:
-                    self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
-                    self.scanPlot.update_plot(node)
-        
-        #Close the HDF5 file after reading
-        h5File.close()
+                    statItem=self.boardList.GetItem(boardIndex, col=1)
+                    if node.cols.isAlive[0] and statItem.GetText()!="Active":
+                        statItem.SetText("Active")
+                        self.boardList.SetItem(statItem)
+                        self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("forest green"))
+                        self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became active")
+                    elif not node.cols.isAlive[0] and statItem.GetText()!="Inactive":
+                        statItem.SetText("Inactive")
+                        self.boardList.SetItem(statItem)
+                        self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("indian red"))
+                        self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became inactive")
+                        
+                    #If there is new data, update the board selected in the list,
+                    #if there is none we pick the first board of the HDF5 file
+                    if self.ipPlottedBoard==None:
+                        self.ipPlottedBoard=node.cols.ipAddr[0]
+                        self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
+                        self.scanPlot.update_plot(node)
+                    elif self.ipPlottedBoard==node.cols.ipAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node.cols.timestamp)-1]:
+                        self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
+                        self.scanPlot.update_plot(node)
+            
+            #Close the HDF5 file after reading
+            h5File.close()
         
     def flash_status_message(self, msg, flash_len_ms=1500):
         self.statusbar.SetStatusText(msg)
@@ -461,7 +466,7 @@ class ScannerGUI(wx.Frame):
         self.exit_program()
         
     def on_sigint(self,signum,stack):
-        print "\nCtrl-C detected, closing the main program and associated threads..."
+        print "\nCtrl-C detected, closing the main program and backend threads..."
         self.exit_program()
         
     def exit_program(self):
