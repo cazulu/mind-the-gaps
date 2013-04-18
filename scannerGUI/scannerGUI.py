@@ -62,7 +62,7 @@ class ScanPlotPanel(wx.Panel):
         self.axes = self.fig.add_subplot(111)
         self.axes.tick_params(axis='both', labelsize='small')
         self.axes.set_axis_bgcolor('white')
-        self.axes.set_title("Frequency scan results", size='medium')
+        self.axes.set_title("Dummy data, no boards found yet", size='medium')
         self.axes.set_ylabel("RSSI(dBm)", size='medium', labelpad=10)
         self.axes.set_xlabel("Frequency(MHz)", size='medium', labelpad=10)
         
@@ -138,6 +138,8 @@ class ScanPlotPanel(wx.Panel):
         if self.ipAddr!=h5table.cols.ipAddr[0] \
             or self.freqStart!=h5table.cols.freqStart[0] \
             or self.freqStart!=h5table.cols.freqStop[0]:
+            self.axes.set_title("Scan results from the detector with IP "+h5table.cols.ipAddr[0]+" "+
+                                datetime.datetime.fromtimestamp(h5table.cols.timestamp[len(h5table)-1]).strftime('%c'), size='medium')
             self.rssiIndex=0
             self.ipAddr=h5table.cols.ipAddr[0]
             self.freqStart=h5table.cols.freqStart[0]
@@ -149,7 +151,7 @@ class ScanPlotPanel(wx.Panel):
             self.maxData=np.amax(h5table.cols.rssiData[:], axis=0)
         else:
             partialAvg=np.mean(h5table.cols.rssiData[self.rssiIndex:], axis=0)
-            self.avgData=np.average(np.hstack(self.avgData, partialAvg), axis=0, weights=[self.rssiIndex, len(h5table.cols.rssiData)-self.rssiIndex])
+            self.avgData=np.average(np.hstack(self.avgData, partialAvg), axis=0, weights=[self.rssiIndex, len(h5table)-self.rssiIndex])
             self.minData=np.amin(np.hstack(self.minData, h5table.cols.rssiData[:]), axis=0)
             self.maxData=np.amin(np.hstack(self.maxData, h5table.cols.rssiData[:]), axis=0)
         self.rssiIndex=len(h5table.cols.rssiData[:])
@@ -395,10 +397,10 @@ class ScannerGUI(wx.Frame):
                 #if there is none we pick the first board of the HDF5 file
                 if self.ipPlottedBoard==None:
                     self.ipPlottedBoard=node.cols.ipAddr[0]
-                    self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
+                    self.plottedDataTimestamp=node.cols.timestamp[len(node)-1]
                     self.scanPlot.update_plot(node)
-                elif self.ipPlottedBoard==node.cols.ipAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node.cols.timestamp)-1]:
-                    self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
+                elif self.ipPlottedBoard==node.cols.ipAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node)-1]:
+                    self.plottedDataTimestamp=node.cols.timestamp[len(node)-1]
                     self.scanPlot.update_plot(node)
             
             #Close the HDF5 file after reading
