@@ -216,6 +216,8 @@ class ScannerGUI(wx.Frame):
         
         #IP of the board currently displayed on the FigureCanvas
         self.ipPlottedBoard=None
+        #Flag to force a replot even if there's no new data in the HDF5 file
+        self.replotRequested=False
         #Timestamp of the last data plotted in the FigureCanvas
         self.plottedDataTimestamp=None
         
@@ -272,6 +274,10 @@ class ScannerGUI(wx.Frame):
         self.boardList.InsertColumn(0, "IP", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
         self.boardList.InsertColumn(1, "Status", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
         #self.boardList.InsertColumn(2, "Location", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
+        
+        #Bind the event of double clicking or pressing enter on top of a list item,
+        #used to change the board being plotted in the main window
+        self.Bind(ULC.EVT_LIST_ITEM_ACTIVATED, self.on_boardListItem_activated, self.boardList)
         
     def create_settingsTree(self):
         '''
@@ -338,7 +344,11 @@ class ScannerGUI(wx.Frame):
         the HDF5 scan data file if it's been modified since the last access
         :param event: wx.Timer event
         '''
-        if not hasattr(self, 'h5LastModified') or self.h5LastAccessed<os.stat("scanData.h5").st_mtime:
+        if not hasattr(self, 'h5LastModified') \
+        or self.h5LastAccessed<os.stat("scanData.h5").st_mtime \
+        or self.replotRequested:
+            if self.replotRequested:
+                self.replotRequested=False
             self.h5FileLastAccessed=os.stat("scanData.h5").st_mtime
             self.process_h5_data()
             
@@ -381,15 +391,15 @@ class ScannerGUI(wx.Frame):
                         self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("indian red"))
                         self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became inactive")
                         
-                    #If there is new data, update the board selected in the list,
-                    #if there is none we pick the first board of the HDF5 file
-                    if self.ipPlottedBoard==None:
-                        self.ipPlottedBoard=node.cols.ipAddr[0]
-                        self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
-                        self.scanPlot.update_plot(node)
-                    elif self.ipPlottedBoard==node.cols.ipAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node.cols.timestamp)-1]:
-                        self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
-                        self.scanPlot.update_plot(node)
+                #If there is new data, update the board selected in the list,
+                #if there is none we pick the first board of the HDF5 file
+                if self.ipPlottedBoard==None:
+                    self.ipPlottedBoard=node.cols.ipAddr[0]
+                    self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
+                    self.scanPlot.update_plot(node)
+                elif self.ipPlottedBoard==node.cols.ipAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node.cols.timestamp)-1]:
+                    self.plottedDataTimestamp=node.cols.timestamp[len(node.cols.timestamp)-1]
+                    self.scanPlot.update_plot(node)
             
             #Close the HDF5 file after reading
             h5File.close()
@@ -405,6 +415,16 @@ class ScannerGUI(wx.Frame):
     
     def on_flash_status_off(self, event):
         self.statusbar.SetStatusText('')
+        
+    def on_boardListItem_activated(self, event):
+        '''
+        Class triggered when the user presses enter or double clicks
+        on one board of the list, which becomes the one plotted in the main window
+        :param event: ULC.EVT_LIST_ITEM_ACTIVATED
+        '''
+        self.ipPlottedBoard=event.GetText()
+        self.plottedDataTimestamp=0
+        self.replotRequested=True
         
     def on_settings_check(self, event):
         '''
