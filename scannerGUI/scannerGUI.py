@@ -360,8 +360,10 @@ class ScannerGUI(wx.Frame):
         '''
         #Open the HDF5 file in read+ mode(fails if the file does not exist)
         with self.h5FileLock:
-            h5File=tables.openFile("scanData.h5", mode="r+", title="Scan data file")
-            
+            #Check if the file exists before attempting to read it
+            if not os.path.isfile("data/newScanData.h5"):
+                return
+            h5File=tables.openFile("data/newScanData.h5", mode="r+", title="Scan data file")
             #Iterate through the node list and update the boardList pane
             for node in h5File.root.scannerNodes:
                 #Make sure that the node has data

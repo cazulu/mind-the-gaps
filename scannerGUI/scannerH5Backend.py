@@ -1,5 +1,7 @@
 #!/usr/bin/python
 
+import os
+import datetime
 import tables as tb
 import threading
 import time
@@ -28,10 +30,14 @@ class H5ScannerThread(threading.Thread):
         threading.Thread.__init__(self)
         self.alive = threading.Event()
         self.alive.set()
+        
+        #Check if the data folder exists and create it otherwise
+        if not os.path.exists("data/"):
+            os.makedirs("data/")
+        
         #Open the HDF5 file and create the table to store the data
-        #TODO: Append data if file exists instead of overwriting it
         with self.h5FileLock:
-            self.h5File=tb.openFile("scanData.h5", mode="w", title="Scan data file", complevel=1, complib="lzo")
+            self.h5File=tb.openFile("data/newScanData.h5", mode="w", title="Scan data file", complevel=1, complib="lzo")
             self.h5Group = self.h5File.createGroup("/", 'scannerNodes', 'White space detector nodes')
         
         self.start()
@@ -106,9 +112,12 @@ class H5ScannerThread(threading.Thread):
                     table.row.append()
                     table.flush()
         
-        #Close the H5 file before exit
+        #Close the H5 file before exit and rename 
+        #it to avoid being overwritten if the backend starts again
         with self.h5FileLock:    
             self.h5File.close()
+            os.rename("data/newScanData.h5", "data/scanData"+datetime.datetime.now().strftime("_%d-%m-%y_%H-%M")+".h5")
+            
             
             
     def join(self, timeout=None):
