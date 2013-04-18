@@ -346,6 +346,10 @@ class ScannerGUI(wx.Frame):
         the HDF5 scan data file if it's been modified since the last access
         :param event: wx.Timer event
         '''
+        #Check if the file exists before attempting to read it
+        if not os.path.isfile("data/newScanData.h5"):
+            return
+        
         if not hasattr(self, 'h5LastModified') \
         or self.h5LastAccessed<os.stat("data/newScanData.h5").st_mtime \
         or self.replotRequested:
@@ -494,6 +498,7 @@ class ScannerGUI(wx.Frame):
         self.exit_program()
         
     def exit_program(self):
+        self.h5Timer.Stop()
         self.udpScanServer.close_backend()
         self.Destroy()
         

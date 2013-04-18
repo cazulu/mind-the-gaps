@@ -93,10 +93,9 @@ class H5ScannerThread(threading.Thread):
                         or table.cols.freqStart[0]!=(scanOpt.startFreqMhz+scanOpt.startFreqKhz/1000.0) \
                         or table.cols.freqStop[0]!=(scanOpt.stopFreqMhz+scanOpt.stopFreqKhz/1000.0) \
                         or table.cols.freqRes[0]!=(scanOpt.freqResolution):
-                        table.remove()
-                        table=self.h5File.createTable(self.h5Group, tableName, scanTableDesc, "Node with the IP " + str(scanResults.clientAddr))
-                        table.flush()
-                
+                        self.h5File.removeNode(self.h5Group, name="node"+str(nodeNumber), recursive=True)
+                        table=self.h5File.createTable(self.h5Group, "node"+str(nodeNumber), scanTableDesc, "Node with the IP " + str(scanResults.clientAddr))
+                        self.h5File.flush()                
                 
                 #If no RSSI data was included in the queue, we assume the board to be inactive
                 if scanResults.rssiData==None:

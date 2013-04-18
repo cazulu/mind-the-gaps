@@ -31,6 +31,8 @@ class UdpScannerServer(threading.Thread):
 		self.clientDict={}
 		self.ClientHandler=collections.namedtuple('ClientHandler', 'udpChunkQueue scannerSM')
 		#Queue to pass the scan results to the H5 backend
+		#TODO: Consider switching to a Priority queue to 
+		#avoid having to read all the remaining data before the 'exit' string
 		self.scanDataQueue=Queue.Queue()
 		#Lock used to regulate access to the H5 file
 		self.h5FileLock=threading.Lock()
