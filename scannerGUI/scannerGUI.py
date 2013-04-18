@@ -347,11 +347,11 @@ class ScannerGUI(wx.Frame):
         :param event: wx.Timer event
         '''
         if not hasattr(self, 'h5LastModified') \
-        or self.h5LastAccessed<os.stat("scanData.h5").st_mtime \
+        or self.h5LastAccessed<os.stat("data/newScanData.h5").st_mtime \
         or self.replotRequested:
             if self.replotRequested:
                 self.replotRequested=False
-            self.h5FileLastAccessed=os.stat("scanData.h5").st_mtime
+            self.h5FileLastAccessed=os.stat("data/newScanData.h5").st_mtime
             self.process_h5_data()
             
     def process_h5_data(self):
@@ -448,7 +448,7 @@ class ScannerGUI(wx.Frame):
         Open the graphical HDF5 view tool to explore the data
         :param event: Event that triggered this function
         '''
-        subprocess.Popen(["vitables", "scanData.h5"])
+        subprocess.Popen(["vitables", "data/newScanData.h5"])
         self.flash_status_message("Opening the HDF5 file explorer...")
         
     def on_save(self, event):
