@@ -10,6 +10,22 @@ import signal
 import numpy as np
 from scannerH5Backend import H5ScannerThread
 
+
+class UdpScanProt():
+	'''
+	Class that holds all the scanner protocol variables
+	'''
+	listenPort=9930
+	protId="GW"
+	headerFormat='<2sH'
+	optFormat='<HHHHHBBBBBxH'
+	ScanOpt=collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
+									stopFreqMhz stopFreqKhz freqResolution modFormat activateAGC \
+									agcLnaGain agcLna2Gain agcDvgaGain rssiWait')
+
+
+#***END OF PARAMETERS***
+
 class UdpScannerServer(threading.Thread):
 	'''
 	Class that starts the receiver socket for the UDP protocol
@@ -22,8 +38,6 @@ class UdpScannerServer(threading.Thread):
 		Init the UDP server back-end
 		'''
 		
-		#Port and buffer size config
-		self.udpPort = 9930
 		self.udpBuflen = 8192
 		
 		#Dictionary that maps each active client IP address to its protocol handler
@@ -54,7 +68,7 @@ class UdpScannerServer(threading.Thread):
 		self.sock = socket.socket(socket.AF_INET, # Internet
 			socket.SOCK_DGRAM) # UDP
 		#Bind without specifying IP address to listen in all the interfaces
-		self.sock.bind(("", self.udpPort))
+		self.sock.bind(("", UdpScanProt.listenPort))
 		self.sock.setblocking(False)
 		
 		while self.alive.isSet():
@@ -105,13 +119,7 @@ class UdpScannerSM(threading.Thread):
 		self.ScanResults=collections.namedtuple('ScanResult', 'clientAddr recvOpt rssiData')
 		
 		#Protocol parameters
-		self.protIdentifier = "GW"
-		self.protHeaderFormat = '<2sH'
-		self.optHeaderFormat = '<HHHHHBBBBBxH'
-		self.ScanOptions = collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
-							stopFreqMhz stopFreqKhz freqResolution modFormat activateAGC \
-							agcLnaGain agcLna2Gain agcDvgaGain rssiWait')
-		self.defaultScanOptions = self.ScanOptions(startFreqMhz=779, startFreqKhz=0, stopFreqMhz=928, stopFreqKhz=0, \
+		self.defaultScanOptions = UdpScanProt.ScanOpt(startFreqMhz=779, startFreqKhz=0, stopFreqMhz=928, stopFreqKhz=0, \
 					       freqResolution=203, modFormat=3, activateAGC=1, agcLnaGain=0, \
 					       agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
 		self.recvScanOptions=self.defaultScanOptions
@@ -154,17 +162,17 @@ class UdpScannerSM(threading.Thread):
 		
 	def protRecvHeader(self):
 		#print "RECV_HEADER state"
-		if len(self.protBuffer)>=struct.calcsize(self.protHeaderFormat):
-			protId, msgLen=struct.unpack_from(self.protHeaderFormat, bytes(self.protBuffer))
-			del self.protBuffer[:struct.calcsize(self.protHeaderFormat)]
+		if len(self.protBuffer)>=struct.calcsize(UdpScanProt.headerFormat):
+			protId, msgLen=struct.unpack_from(UdpScanProt.headerFormat, bytes(self.protBuffer))
+			del self.protBuffer[:struct.calcsize(UdpScanProt.headerFormat)]
 			#print "The message protocol ID is:", protId
-			if protId==self.protIdentifier:
+			if protId==UdpScanProt.protId:
 				#print "The message length is", msgLen, "bytes"
-				if msgLen<struct.calcsize(self.optHeaderFormat):
-					#print "Erroneous message length: Message length=",msgLen, " OptHeader len=", struct.calcsize(self.optHeaderFormat)
+				if msgLen<struct.calcsize(UdpScanProt.optFormat):
+					#print "Erroneous message length: Message length=",msgLen, " OptHeader len=", struct.calcsize(UdpScanProt.optFormat)
 					return self.protFail
 				#Get the amount of UINT16 RSSI values that the message contains and initialize the dataPayloadFormat string
-				self.amtRssiValues=msgLen-struct.calcsize(self.protHeaderFormat)-struct.calcsize(self.optHeaderFormat)
+				self.amtRssiValues=msgLen-struct.calcsize(UdpScanProt.headerFormat)-struct.calcsize(UdpScanProt.optFormat)
 				if self.amtRssiValues<=0:
 					#print "Message erroneous, no RSSI data inside"
 					return self.protFail
@@ -179,9 +187,9 @@ class UdpScannerSM(threading.Thread):
 	
 	def protRecvOpt(self):
 		#print "RECV_OPT state"
-		if len(self.protBuffer)>=struct.calcsize(self.optHeaderFormat):
-			self.recvScanOptions=self.ScanOptions._make(struct.unpack_from(self.optHeaderFormat, bytes(self.protBuffer)))
-			del self.protBuffer[:struct.calcsize(self.optHeaderFormat)]
+		if len(self.protBuffer)>=struct.calcsize(UdpScanProt.optFormat):
+			self.recvScanOptions=UdpScanProt.ScanOpt._make(struct.unpack_from(UdpScanProt.optFormat, bytes(self.protBuffer)))
+			del self.protBuffer[:struct.calcsize(UdpScanProt.optFormat)]
 			#print "**Scan options received**"
 			startFreq=float(self.recvScanOptions.startFreqMhz) + self.recvScanOptions.startFreqKhz/1000.0
 			stopFreq=float(self.recvScanOptions.stopFreqMhz) + self.recvScanOptions.stopFreqKhz/1000.0
@@ -255,37 +263,32 @@ class UdpScannerSM(threading.Thread):
 
 
 class UdpScannerClient(threading.Thread):
-    
-    def __init__(self, scannerAddr, guiScanOptions):
-        self.scannerAddr=scannerAddr
-        self.scanOptions=guiScanOptions
-        
-        #Protocol parameters
-        self.protIdentifier="GW"
-        self.protHeaderFormat = '<2sH'
-        self.optHeaderFormat = '<HHHHHBBBBBxH'
-        self.ProtHeader = collections.namedtuple('protHeader', 'protId protLen')
-        self.pkgLen=struct.calcsize(self.optHeaderFormat)+struct.calcsize(self.protHeaderFormat)
-        self.protHeader = self.ProtHeader(protId=self.protIdentifier, protLen=self.pkgLen)
-        
-        threading.Thread.__init__(self)
-        self.start()
-    
-    def run(self):
-        self.sock = socket.socket(socket.AF_INET, # Internet
-                                  socket.SOCK_DGRAM) # UDP
-        #Disable UDP checksums
-        #self.sock.setsockopt(socket.SOL_SOCKET,socket.SO_NO_CHECK,1)
-        #Bind without specifying IP address to listen in all the interfaces
-        bytesToSend=self.pkgLen
-        #Store the header and the options
-        packed_data = struct.pack(self.protHeaderFormat, *self.protHeader)
-        packed_data += struct.pack(self.optHeaderFormat, *self.scanOptions)
-        #Send the new options to the microcontroller platform
-        while bytesToSend>0:
-            bytesToSend-=self.sock.sendto(packed_data, self.scannerAddr)
-        self.sock.close()
-        print "\n\n***Options sent***\n\n"
+	'''
+	Thread used to send the current scan options to a board of the grid
+	'''
+	def __init__(self, scannerAddr, guiScanOptions):
+		self.scannerAddr=scannerAddr
+		self.scanOptions=guiScanOptions
+		
+		#Protocol parameters
+		self.pkgLen=struct.calcsize(UdpScanProt.optFormat)+struct.calcsize(UdpScanProt.headerFormat)
+		self.protHeader = UdpScanProt.headerFormat(protId=UdpScanProt.protId, protLen=self.pkgLen)
+		
+		threading.Thread.__init__(self)
+		self.start()
+		
+	def run(self):
+		self.sock = socket.socket(socket.AF_INET, # Internet
+		                          socket.SOCK_DGRAM) # UDP
+		bytesToSend=self.pkgLen
+		#Store the header and the options
+		packed_data = struct.pack(UdpScanProt.headerFormat, *self.protHeader)
+		packed_data += struct.pack(UdpScanProt.optFormat, *self.scanOptions)
+		#Send the new options to the microcontroller platform
+		while bytesToSend>0:
+			bytesToSend-=self.sock.sendto(packed_data, self.scannerAddr)
+		self.sock.close()
+		print "\n\n***Options sent***\n\n"
 
 if __name__ == '__main__':
 	print "Starting UDP scanner server backend"
