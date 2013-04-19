@@ -7,6 +7,7 @@ import subprocess
 import tables
 import wx
 import wx.lib.agw.aui as aui
+import wx.lib.agw.floatspin as FS
 import wx.lib.agw.ultimatelistctrl as ULC
 import wx.lib.customtreectrl as CT
 import datetime
@@ -20,7 +21,6 @@ from matplotlib.backends.backend_wxagg import \
     FigureCanvasWxAgg as FigureCanvas, \
     NavigationToolbar2WxAgg as NavigationToolbar
 import numpy as np
-        
 
 class ScanPlotPanel(wx.Panel):
     """
@@ -297,14 +297,24 @@ class ScannerGUI(wx.Frame):
         modItem = self.settingsTree.AppendItem(scanOptItem, "Modulation")
         gainItem = self.settingsTree.AppendItem(scanOptItem, "Gain")
         
-        freqStartTextCtrl = wx.TextCtrl(self.settingsTree, -1, "828")
-        freqStartItem = self.settingsTree.AppendItem(freqRangeItem, "Start(MHz)", wnd=freqStartTextCtrl)
+        self.freqStartSpinCtrl = FS.FloatSpin(self.settingsTree, -1, min_val=780, max_val=927.797,
+                                         increment=0.203, digits=3, value=780, agwStyle=FS.FS_LEFT)
+        freqStartItem = self.settingsTree.AppendItem(freqRangeItem, "Start(MHz)", wnd=self.freqStartSpinCtrl)
+        self.Bind(FS.EVT_FLOATSPIN, self.on_freqRange_change, self.freqStartSpinCtrl)
         
-        freqStopTextCtrl = wx.TextCtrl(self.settingsTree, -1, "920")
-        freqStopItem = self.settingsTree.AppendItem(freqRangeItem, "Stop(MHz)", wnd=freqStopTextCtrl)
+        self.freqStopSpinCtrl = FS.FloatSpin(self.settingsTree, -1, min_val=780.203, max_val=928,
+                                         increment=0.203, digits=3, value=928, agwStyle=FS.FS_LEFT)
+        freqStopItem = self.settingsTree.AppendItem(freqRangeItem, "Stop(MHz)", wnd=self.freqStopSpinCtrl)
+        self.Bind(FS.EVT_FLOATSPIN, self.on_freqRange_change, self.freqStopSpinCtrl)
         
-        freqResTextCtrl = wx.TextCtrl(self.settingsTree, -1, "30")
-        freqResItem = self.settingsTree.AppendItem(freqRangeItem, "Resolution(KHz)", wnd=freqResTextCtrl)
+        freqResChoices = ['58', '68', '81', '102', 
+                          '116', '135', '162', '203',
+                          '232', '270', '325', '406',
+                          '464', '541', '650', '812']
+        self.freqResBox = wx.ComboBox(self.settingsTree, -1, choices=freqResChoices, style=wx.CB_READONLY, size=(80,-1))
+        self.freqResBox.SetValue('203')
+        freqResItem = self.settingsTree.AppendItem(freqRangeItem, "Resolution(KHz)", wnd=self.freqResBox)
+        self.Bind(wx.EVT_COMBOBOX, self.on_freqRange_change, self.freqResBox)
         
         modFormatChoices = ['OOK', 'ASK', '2-FSK', '4-FSK', 'GFSK', 'MSK']
         modFormatBox = wx.ComboBox(self.settingsTree, -1, choices=modFormatChoices, style=wx.CB_READONLY, size=(80,-1))
@@ -313,32 +323,35 @@ class ScannerGUI(wx.Frame):
         
         self.agcEnableItem = self.settingsTree.AppendItem(gainItem, "Enable AGC", ct_type=1)
         self.settingsTree.CheckItem(self.agcEnableItem, checked=True)
-        
-        lnaGainChoices = ['0', '1', '2', '3']
-        lnaGainBox = wx.ComboBox(self.settingsTree, -1, choices=lnaGainChoices, style=wx.CB_READONLY, size=(80,-1))
-        lnaGainBox.SetValue('0')
-        self.lnaGainItem = self.settingsTree.AppendItem(gainItem, "LNA Gain", wnd=lnaGainBox)
-        self.settingsTree.EnableItem(self.lnaGainItem, enable=False, torefresh=True)
-        
-        lna2GainChoices = ['0', '1', '2', '3', '4', '5', '6', '7']
-        lna2GainBox = wx.ComboBox(self.settingsTree, -1, choices=lna2GainChoices, style=wx.CB_READONLY, size=(80,-1))
-        lna2GainBox.SetValue('0')
-        lna2GainBox.Disable()
-        self.lna2GainItem = self.settingsTree.AppendItem(gainItem, "LNA2 Gain", wnd=lna2GainBox)
-        self.settingsTree.EnableItem(self.lna2GainItem, enable=False, torefresh=True)
-        
-        dvgaGainChoices = ['0', '1', '2', '3', '4', '5', '6', '7']
-        dvgaGainBox = wx.ComboBox(self.settingsTree, -1, choices=dvgaGainChoices, style=wx.CB_READONLY, size=(80,-1))
-        dvgaGainBox.Disable()
-        dvgaGainBox.SetValue('0')
-        self.dvgaGainItem = self.settingsTree.AppendItem(gainItem, "DVGA Gain", wnd=dvgaGainBox)
-        self.settingsTree.EnableItem(self.dvgaGainItem, enable=False, torefresh=True)
-        
         #Bind the item checked event
         self.Bind(CT.EVT_TREE_ITEM_CHECKED, self.on_settings_check, self.settingsTree)
         
+        self.lnaGainSpinCtrl=wx.SpinCtrl(self.settingsTree, -1, min=0, max=3, initial=0, style=wx.ALIGN_LEFT|wx.SP_ARROW_KEYS)
+        self.lnaGainItem = self.settingsTree.AppendItem(gainItem, "LNA Gain", wnd=self.lnaGainSpinCtrl)
+        self.settingsTree.EnableItem(self.lnaGainItem, enable=False, torefresh=True)
+        self.Bind(wx.EVT_SPINCTRL, self.on_gain_change, self.lnaGainSpinCtrl)
+        
+        self.lna2GainSpinCtrl=wx.SpinCtrl(self.settingsTree, -1, min=0, max=7, initial=0, style=wx.ALIGN_LEFT|wx.SP_ARROW_KEYS)
+        self.lna2GainItem = self.settingsTree.AppendItem(gainItem, "LNA2 Gain", wnd=self.lna2GainSpinCtrl)
+        self.settingsTree.EnableItem(self.lna2GainItem, enable=False, torefresh=True)
+        self.Bind(wx.EVT_SPINCTRL, self.on_gain_change, self.lna2GainSpinCtrl)
+        
+        self.dvgaGainSpinCtrl=wx.SpinCtrl(self.settingsTree, -1, min=0, max=7, initial=0, style=wx.ALIGN_LEFT|wx.SP_ARROW_KEYS)
+        self.dvgaGainItem = self.settingsTree.AppendItem(gainItem, "DVGA Gain", wnd=self.dvgaGainSpinCtrl)
+        self.settingsTree.EnableItem(self.dvgaGainItem, enable=False, torefresh=True)
+        self.Bind(wx.EVT_SPINCTRL, self.on_gain_change, self.dvgaGainSpinCtrl)
+        
         #Create the plot options branch of the TreeCtrl
         #TODO: Add graphic options here!!!!
+        
+    def on_sendScanOpt_timer(self, event):
+        '''
+        Function triggered when the sendScanOpt timer expires,
+        checks if the scan options have changed and in that case
+        sends the new options to all the active boards in the grid
+        :param event: wx.Timer event
+        '''
+        pass
         
     def on_pollh5_timer(self, event):
         '''
@@ -346,71 +359,67 @@ class ScannerGUI(wx.Frame):
         the HDF5 scan data file if it's been modified since the last access
         :param event: wx.Timer event
         '''
-        #Check if the file exists before attempting to read it
-        if not os.path.isfile("data/newScanData.h5"):
-            return
-        
-        if not hasattr(self, 'h5LastModified') \
-        or self.h5LastAccessed<os.stat("data/newScanData.h5").st_mtime \
-        or self.replotRequested:
-            if self.replotRequested:
-                self.replotRequested=False
-            self.h5FileLastAccessed=os.stat("data/newScanData.h5").st_mtime
-            self.process_h5_data()
+        with self.h5FileLock:
+            #Check if the file exists before attempting to read it
+            if not os.path.isfile("data/newScanData.h5"):
+                return
+            
+            if not hasattr(self, 'h5LastModified') \
+            or self.h5LastAccessed<os.stat("data/newScanData.h5").st_mtime \
+            or self.replotRequested:
+                if self.replotRequested:
+                    self.replotRequested=False
+                self.h5FileLastAccessed=os.stat("data/newScanData.h5").st_mtime
+                self.process_h5_data()
             
     def process_h5_data(self):
         '''
         Checks the HDF5 scan data file and updates the GUI accordingly.
         '''
-        #Open the HDF5 file in read+ mode(fails if the file does not exist)
-        with self.h5FileLock:
-            #Check if the file exists before attempting to read it
-            if not os.path.isfile("data/newScanData.h5"):
-                return
-            h5File=tables.openFile("data/newScanData.h5", mode="r+", title="Scan data file")
-            #Iterate through the node list and update the boardList pane
-            for node in h5File.root.scannerNodes:
-                #Make sure that the node has data
-                if len(node)<=0:
-                    continue
-                #Update the node if it's already in the list
-                #and otherwise create it(FindItem returns -1 in case of failure)
-                boardIndex=self.boardList.FindItem(start=-1, str=node.cols.ipAddr[0], partial=False)
-                if boardIndex==-1:
-                    ipIndex=self.boardList.InsertStringItem(sys.maxint, label=node.cols.ipAddr[0])
-                    if node.cols.isAlive[0]:
-                        statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Active")
-                        self.boardList.SetItemTextColour(statIndex, wx.NamedColour("forest green"))
-                        self.flash_status_message("Detected a new active board with the IP "+node.cols.ipAddr[0])
-                    else:
-                        statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Inactive")
-                        self.boardList.SetItemTextColour(statIndex, wx.NamedColour("indian red"))
-                        self.flash_status_message("Detected a new inactive board with the IP "+node.cols.ipAddr[0])
+        h5File=tables.openFile("data/newScanData.h5", mode="r+", title="Scan data file")
+        #Iterate through the node list and update the boardList pane
+        for node in h5File.root.scannerNodes:
+            #Make sure that the node has data
+            if len(node)<=0:
+                continue
+            #Update the node if it's already in the list
+            #and otherwise create it(FindItem returns -1 in case of failure)
+            boardIndex=self.boardList.FindItem(start=-1, str=node.cols.ipAddr[0], partial=False)
+            if boardIndex==-1:
+                ipIndex=self.boardList.InsertStringItem(sys.maxint, label=node.cols.ipAddr[0])
+                if node.cols.isAlive[0]:
+                    statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Active")
+                    self.boardList.SetItemTextColour(statIndex, wx.NamedColour("forest green"))
+                    self.flash_status_message("Detected a new active board with the IP "+node.cols.ipAddr[0])
                 else:
-                    statItem=self.boardList.GetItem(boardIndex, col=1)
-                    if node.cols.isAlive[0] and statItem.GetText()!="Active":
-                        statItem.SetText("Active")
-                        self.boardList.SetItem(statItem)
-                        self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("forest green"))
-                        self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became active")
-                    elif not node.cols.isAlive[0] and statItem.GetText()!="Inactive":
-                        statItem.SetText("Inactive")
-                        self.boardList.SetItem(statItem)
-                        self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("indian red"))
-                        self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became inactive")
-                        
-                #If there is new data, update the board selected in the list,
-                #if there is none we pick the first board of the HDF5 file
-                if self.ipPlottedBoard==None:
-                    self.ipPlottedBoard=node.cols.ipAddr[0]
-                    self.plottedDataTimestamp=node.cols.timestamp[len(node)-1]
-                    self.scanPlot.update_plot(node)
-                elif self.ipPlottedBoard==node.cols.ipAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node)-1]:
-                    self.plottedDataTimestamp=node.cols.timestamp[len(node)-1]
-                    self.scanPlot.update_plot(node)
-            
-            #Close the HDF5 file after reading
-            h5File.close()
+                    statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Inactive")
+                    self.boardList.SetItemTextColour(statIndex, wx.NamedColour("indian red"))
+                    self.flash_status_message("Detected a new inactive board with the IP "+node.cols.ipAddr[0])
+            else:
+                statItem=self.boardList.GetItem(boardIndex, col=1)
+                if node.cols.isAlive[0] and statItem.GetText()!="Active":
+                    statItem.SetText("Active")
+                    self.boardList.SetItem(statItem)
+                    self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("forest green"))
+                    self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became active")
+                elif not node.cols.isAlive[0] and statItem.GetText()!="Inactive":
+                    statItem.SetText("Inactive")
+                    self.boardList.SetItem(statItem)
+                    self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("indian red"))
+                    self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became inactive")
+                    
+            #If there is new data, update the board selected in the list,
+            #if there is none we pick the first board of the HDF5 file
+            if self.ipPlottedBoard==None:
+                self.ipPlottedBoard=node.cols.ipAddr[0]
+                self.plottedDataTimestamp=node.cols.timestamp[len(node)-1]
+                self.scanPlot.update_plot(node)
+            elif self.ipPlottedBoard==node.cols.ipAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node)-1]:
+                self.plottedDataTimestamp=node.cols.timestamp[len(node)-1]
+                self.scanPlot.update_plot(node)
+        
+        #Close the HDF5 file after reading
+        h5File.close()
         
     def flash_status_message(self, msg, flash_len_ms=1500):
         self.statusbar.SetStatusText(msg)
@@ -445,6 +454,39 @@ class ScannerGUI(wx.Frame):
             self.settingsTree.EnableItem(self.lnaGainItem, enable=agcDisabled, torefresh=True)
             self.settingsTree.EnableItem(self.lna2GainItem, enable=agcDisabled, torefresh=True)
             self.settingsTree.EnableItem(self.dvgaGainItem, enable=agcDisabled, torefresh=True)
+            
+    def on_freqRange_change(self, event):
+        '''
+        Function triggered when the user changes the freqStart, freqStop or freqRange options,
+        which ensures that the scan range options remain consistent
+        and updates the scanOpt tuple to be sent to the boards
+        :param event: Event that triggered the function
+        '''
+        if event.GetEventObject()==self.freqStartSpinCtrl:
+            self.freqStopSpinCtrl.SetRange(min_val=self.freqStartSpinCtrl.GetValue()+float(self.freqResBox.GetValue())/1000.0,
+                                           max_val=self.freqStopSpinCtrl.GetMax())
+        elif event.GetEventObject()==self.freqStopSpinCtrl:
+            self.freqStartSpinCtrl.SetRange(max_val=self.freqStopSpinCtrl.GetValue()-float(self.freqResBox.GetValue())/1000.0,
+                                            min_val=self.freqStartSpinCtrl.GetMin())
+        elif event.GetEventObject()==self.freqResBox:
+            self.freqStartSpinCtrl.SetIncrement(float(self.freqResBox.GetValue())/1000.0)
+            self.freqStopSpinCtrl.SetIncrement(float(self.freqResBox.GetValue())/1000.0)
+            
+    def on_gain_change(self, event):
+        '''
+        Function triggered when the user changes the gain values of the different amplifier stages
+        that updates the scanOpt tuple to be sent to the boards
+        :param event: wx.EVT_SPIN
+        '''
+        pass
+        
+    def on_modFormat_change(self, event):
+        '''
+        Function triggered when the user changes the modulation format settings,
+        which updates the scanOpt tuple to be sent to the boards
+        :param event: wx.EVT_COMBOBOX
+        '''
+        pass
             
         
     def on_h5_view(self, event):
