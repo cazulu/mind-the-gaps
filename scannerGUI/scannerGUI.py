@@ -230,6 +230,14 @@ class ScannerGUI(wx.Frame):
         #Get the HDF5 file lock identifier
         self.h5FileLock=self.udpScanServer.get_h5_lock()
         
+        #Bool that controls whether or not the user changed the scan settings
+        self.scanOptChanged=False
+        #Timer that triggers the sending of the scan settings to the boards of the grid
+        self.sendScanOptTimer=wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.on_sendScanOpt_timer, self.sendScanOptTimer)
+        self.sendScanOptTimer.Start(1000)
+        
+        
         #Create the timer for checking the HDF5 scan data
         self.h5Timer=wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_pollh5_timer, self.h5Timer)
@@ -296,6 +304,7 @@ class ScannerGUI(wx.Frame):
         freqRangeItem = self.settingsTree.AppendItem(scanOptItem, "Scan range")
         modItem = self.settingsTree.AppendItem(scanOptItem, "Modulation")
         gainItem = self.settingsTree.AppendItem(scanOptItem, "Gain")
+        timingItem = self.settingsTree.AppendItem(scanOptItem, "Timing")
         
         self.freqStartSpinCtrl = FS.FloatSpin(self.settingsTree, -1, min_val=780, max_val=927.797,
                                          increment=0.203, digits=3, value=780, agwStyle=FS.FS_LEFT)
@@ -341,6 +350,11 @@ class ScannerGUI(wx.Frame):
         self.settingsTree.EnableItem(self.dvgaGainItem, enable=False, torefresh=True)
         self.Bind(wx.EVT_SPINCTRL, self.on_gain_change, self.dvgaGainSpinCtrl)
         
+        self.rssiWaitSpinCtrl=FS.FloatSpin(self.settingsTree, -1, min_val=0.25, max_val=100,
+                                         increment=1, digits=2, value=5, agwStyle=FS.FS_LEFT)
+        rssiWaitItem = self.settingsTree.AppendItem(timingItem, "RSSI wait(ms)", wnd=self.rssiWaitSpinCtrl)
+        self.Bind(FS.EVT_FLOATSPIN, self.on_timing_change, self.rssiWaitSpinCtrl)
+        
         #Create the plot options branch of the TreeCtrl
         #TODO: Add graphic options here!!!!
         
@@ -351,7 +365,11 @@ class ScannerGUI(wx.Frame):
         sends the new options to all the active boards in the grid
         :param event: wx.Timer event
         '''
-        pass
+        if self.scanOptChanged:
+            maxIndex=len(self.boardList)
+            for i in range(0, maxIndex):
+                pass
+            self.scanOptChanged=False
         
     def on_pollh5_timer(self, event):
         '''
@@ -462,6 +480,7 @@ class ScannerGUI(wx.Frame):
         and updates the scanOpt tuple to be sent to the boards
         :param event: Event that triggered the function
         '''
+        self.scanOptChanged=True
         if event.GetEventObject()==self.freqStartSpinCtrl:
             self.freqStopSpinCtrl.SetRange(min_val=self.freqStartSpinCtrl.GetValue()+float(self.freqResBox.GetValue())/1000.0,
                                            max_val=self.freqStopSpinCtrl.GetMax())
@@ -478,7 +497,7 @@ class ScannerGUI(wx.Frame):
         that updates the scanOpt tuple to be sent to the boards
         :param event: wx.EVT_SPIN
         '''
-        pass
+        self.scanOptChanged=True
         
     def on_modFormat_change(self, event):
         '''
@@ -486,7 +505,15 @@ class ScannerGUI(wx.Frame):
         which updates the scanOpt tuple to be sent to the boards
         :param event: wx.EVT_COMBOBOX
         '''
-        pass
+        self.scanOptChanged=True
+    
+    def on_timing_change(self, event):
+        '''
+        Function triggered when the user changes the timing settings,
+        which updates the scanOpt tuple to be sent to the boards
+        :param event: wx.EVT_SPIN
+        '''
+        self.scanOptChanged=True
             
         
     def on_h5_view(self, event):
@@ -541,6 +568,7 @@ class ScannerGUI(wx.Frame):
         
     def exit_program(self):
         self.h5Timer.Stop()
+        self.sendScanOptTimer.Stop()
         self.udpScanServer.close_backend()
         self.Destroy()
         

@@ -19,9 +19,18 @@ class UdpScanProt():
 	protId="GW"
 	headerFormat='<2sH'
 	optFormat='<HHHHHBBBBBxH'
-	ScanOpt=collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
+	Opt=collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
 									stopFreqMhz stopFreqKhz freqResolution modFormat activateAGC \
 									agcLnaGain agcLna2Gain agcDvgaGain rssiWait')
+	defaultOpt = Opt(startFreqMhz=779, startFreqKhz=0, stopFreqMhz=928, stopFreqKhz=0, \
+			     freqResolution=203, modFormat=3, activateAGC=1, agcLnaGain=0, \
+			     agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
+	modFormatDict={'2-FSK':0,
+				 	'GFSK':1,
+					'ASK':2,
+					'OOK':3,
+					'4-FSK':4,
+					'MSK':5 }
 
 
 #***END OF PARAMETERS***
@@ -119,10 +128,7 @@ class UdpScannerSM(threading.Thread):
 		self.ScanResults=collections.namedtuple('ScanResult', 'clientAddr recvOpt rssiData')
 		
 		#Protocol parameters
-		self.defaultScanOptions = UdpScanProt.ScanOpt(startFreqMhz=779, startFreqKhz=0, stopFreqMhz=928, stopFreqKhz=0, \
-					       freqResolution=203, modFormat=3, activateAGC=1, agcLnaGain=0, \
-					       agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
-		self.recvScanOptions=self.defaultScanOptions
+		self.recvScanOptions=UdpScanProt.defaulOpt
 		#The payload format will be defined once we know the full length of the message
 		self.dataPayloadFormat=""
 		#If we hear nothing from the board in 5 seconds, we close the state machine
@@ -188,7 +194,7 @@ class UdpScannerSM(threading.Thread):
 	def protRecvOpt(self):
 		#print "RECV_OPT state"
 		if len(self.protBuffer)>=struct.calcsize(UdpScanProt.optFormat):
-			self.recvScanOptions=UdpScanProt.ScanOpt._make(struct.unpack_from(UdpScanProt.optFormat, bytes(self.protBuffer)))
+			self.recvScanOptions=UdpScanProt.Opt._make(struct.unpack_from(UdpScanProt.optFormat, bytes(self.protBuffer)))
 			del self.protBuffer[:struct.calcsize(UdpScanProt.optFormat)]
 			#print "**Scan options received**"
 			startFreq=float(self.recvScanOptions.startFreqMhz) + self.recvScanOptions.startFreqKhz/1000.0
@@ -266,9 +272,14 @@ class UdpScannerClient(threading.Thread):
 	'''
 	Thread used to send the current scan options to a board of the grid
 	'''
-	def __init__(self, scannerAddr, guiScanOptions):
+	def __init__(self, scannerAddr, freqStart, freqStop, freqRes, 
+						modFormat, agcEnable, agcLnaGain, agcLna2Gain, agcDvgaGain, rssiWait):
 		self.scannerAddr=scannerAddr
-		self.scanOptions=guiScanOptions
+		self.scanOptions=UdpScanProt.Opt(startFreqMhz=int(freqStart), startFreqKhz=int((freqStart-int(freqStart))*1000), \
+										 stopFreqMhz=int(freqStop), stopFreqKhz=int((freqStop-int(freqStop))*1000), \
+										 freqResolution=int(freqRes), modFormat=UdpScanProt.modFormatDict[modFormat], \
+										 activateAGC=1 if agcEnable else 0, agcLnaGain=agcLnaGain, agcLna2Gain=agcLna2Gain, \
+										 agcDvgaGain=agcDvgaGain, rssiWait=int(rssiWait))
 		
 		#Protocol parameters
 		self.pkgLen=struct.calcsize(UdpScanProt.optFormat)+struct.calcsize(UdpScanProt.headerFormat)
@@ -286,9 +297,8 @@ class UdpScannerClient(threading.Thread):
 		packed_data += struct.pack(UdpScanProt.optFormat, *self.scanOptions)
 		#Send the new options to the microcontroller platform
 		while bytesToSend>0:
-			bytesToSend-=self.sock.sendto(packed_data, self.scannerAddr)
+			bytesToSend-=self.sock.sendto(packed_data, (self.scannerAddr, UdpScanProt.listenPort))
 		self.sock.close()
-		print "\n\n***Options sent***\n\n"
 
 if __name__ == '__main__':
 	print "Starting UDP scanner server backend"
