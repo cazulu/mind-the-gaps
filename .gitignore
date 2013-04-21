@@ -1,0 +1,7 @@
+Debug/
+data/
+.mk
+.pyc
+.elf
+.map
+.h5

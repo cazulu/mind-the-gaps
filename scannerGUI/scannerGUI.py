@@ -12,6 +12,7 @@ import wx.lib.agw.ultimatelistctrl as ULC
 import wx.lib.customtreectrl as CT
 import datetime
 from scannerUdpBackend import UdpScannerServer
+from scannerUdpBackend import UdpScannerClient
 
 # Use wx with matplotlib with the WXAgg backend. 
 import matplotlib
@@ -326,9 +327,9 @@ class ScannerGUI(wx.Frame):
         self.Bind(wx.EVT_COMBOBOX, self.on_freqRange_change, self.freqResBox)
         
         modFormatChoices = ['OOK', 'ASK', '2-FSK', '4-FSK', 'GFSK', 'MSK']
-        modFormatBox = wx.ComboBox(self.settingsTree, -1, choices=modFormatChoices, style=wx.CB_READONLY, size=(80,-1))
-        modFormatBox.SetValue('ASK')
-        modFormatItem = self.settingsTree.AppendItem(modItem, "Modulation format", wnd=modFormatBox)
+        self.modFormatBox = wx.ComboBox(self.settingsTree, -1, choices=modFormatChoices, style=wx.CB_READONLY, size=(80,-1))
+        self.modFormatBox.SetValue('ASK')
+        modFormatItem = self.settingsTree.AppendItem(modItem, "Modulation format", wnd=self.modFormatBox)
         
         self.agcEnableItem = self.settingsTree.AppendItem(gainItem, "Enable AGC", ct_type=1)
         self.settingsTree.CheckItem(self.agcEnableItem, checked=True)
@@ -366,9 +367,19 @@ class ScannerGUI(wx.Frame):
         :param event: wx.Timer event
         '''
         if self.scanOptChanged:
-            maxIndex=len(self.boardList)
-            for i in range(0, maxIndex):
-                pass
+            maxIndex=self.boardList.GetItemCount()
+            #Start a client thread per board to send the scan options
+            for index in range(0, maxIndex):
+                boardIp=self.boardList.GetItem(index, 0).GetText()
+                #Check if the board is alive before sending the options
+                if self.boardList.GetItem(index, 1).GetText()!='Active':
+                    continue
+                print "Sending opt to "+boardIp
+                UdpScannerClient(scannerAddr=boardIp, freqStart=self.freqStartSpinCtrl.GetValue(), 
+                                 freqStop=self.freqStopSpinCtrl.GetValue(), freqRes=self.freqResBox.GetValue(), 
+                                 modFormat=self.modFormatBox.GetValue(), agcEnable=self.settingsTree.IsItemChecked(self.agcEnableItem), 
+                                 agcLnaGain=self.lna2GainSpinCtrl.GetValue(), agcLna2Gain=self.lna2GainSpinCtrl.GetValue(), 
+                                 agcDvgaGain=self.dvgaGainSpinCtrl.GetValue(), rssiWait=self.rssiWaitSpinCtrl.GetValue())
             self.scanOptChanged=False
         
     def on_pollh5_timer(self, event):
@@ -468,6 +479,7 @@ class ScannerGUI(wx.Frame):
         '''
         #Disable the manual gain settings if the AGC is activated and vice versa
         if event.GetItem() == self.agcEnableItem:
+            self.scanOptChanged=True
             agcDisabled = not self.settingsTree.IsItemChecked(self.agcEnableItem)
             self.settingsTree.EnableItem(self.lnaGainItem, enable=agcDisabled, torefresh=True)
             self.settingsTree.EnableItem(self.lna2GainItem, enable=agcDisabled, torefresh=True)

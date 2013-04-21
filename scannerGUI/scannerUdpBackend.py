@@ -19,6 +19,7 @@ class UdpScanProt():
 	protId="GW"
 	headerFormat='<2sH'
 	optFormat='<HHHHHBBBBBxH'
+	Header=collections.namedtuple('ProtHeader', 'protId protLen')
 	Opt=collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
 									stopFreqMhz stopFreqKhz freqResolution modFormat activateAGC \
 									agcLnaGain agcLna2Gain agcDvgaGain rssiWait')
@@ -128,7 +129,7 @@ class UdpScannerSM(threading.Thread):
 		self.ScanResults=collections.namedtuple('ScanResult', 'clientAddr recvOpt rssiData')
 		
 		#Protocol parameters
-		self.recvScanOptions=UdpScanProt.defaulOpt
+		self.recvScanOptions=UdpScanProt.defaultOpt
 		#The payload format will be defined once we know the full length of the message
 		self.dataPayloadFormat=""
 		#If we hear nothing from the board in 5 seconds, we close the state machine
@@ -283,7 +284,7 @@ class UdpScannerClient(threading.Thread):
 		
 		#Protocol parameters
 		self.pkgLen=struct.calcsize(UdpScanProt.optFormat)+struct.calcsize(UdpScanProt.headerFormat)
-		self.protHeader = UdpScanProt.headerFormat(protId=UdpScanProt.protId, protLen=self.pkgLen)
+		self.protHeader = UdpScanProt.Header(protId=UdpScanProt.protId, protLen=self.pkgLen)
 		
 		threading.Thread.__init__(self)
 		self.start()
