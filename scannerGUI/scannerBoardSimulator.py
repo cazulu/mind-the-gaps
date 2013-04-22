@@ -38,7 +38,6 @@ if args.srcIP!=DFLT_SRC_IP:
 	if os.getuid()!=0:
 		parser.error("Root privileges required to spoof the source IP address of a packet, try running the script again with sudo")
 	try:
-		import scapy
 		from scapy.all import *
 	except ImportError, e:
 		parser.error("Scapy package not installed, required for spoofing source IP address. Try sudo apt-get install python-scapy")
@@ -72,7 +71,7 @@ ScanOptions = collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
 
 testScanOptions = ScanOptions(startFreqMhz=int(startFreq), startFreqKhz=int((startFreq-int(startFreq))*1000), \
 				stopFreqMhz=int(stopFreq), stopFreqKhz=int((stopFreq-int(stopFreq))*1000), \
-				freqResolution=freqResolution, modFormat=3, activateAGC=1, agcLnaGain=0, \
+				freqResolution=freqResolution, modFormat=2, activateAGC=1, agcLnaGain=0, \
 				agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
 
 pktSent=0
@@ -81,12 +80,12 @@ while args.packetLimit==None or pktSent<args.packetLimit:
 	print "Generating data"
 	#Randomize the frequency range if the --randomizeRange parameter is set
 	if args.randRange and time.time()-randTimer>=DFLT_RAND_DELAY:
-	    startFreq=random.randrange(int(MIN_FREQ), int((MAX_FREQ+MIN_FREQ)/2) -1)
-	    stopFreq=random.randrange(int((MAX_FREQ+MIN_FREQ)/2 +1),int(MAX_FREQ))
-	    testScanOptions=ScanOptions(startFreqMhz=startFreq, startFreqKhz=0, stopFreqMhz=stopFreq, stopFreqKhz=0, \
-	                freqResolution=203, modFormat=3, activateAGC=1, agcLnaGain=0, \
-	                agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
-	    randTimer=time.time()
+		startFreq=random.randrange(int(MIN_FREQ), int((MAX_FREQ+MIN_FREQ)/2) -1)
+		stopFreq=random.randrange(int((MAX_FREQ+MIN_FREQ)/2 +1),int(MAX_FREQ))
+		testScanOptions=ScanOptions(startFreqMhz=startFreq, startFreqKhz=0, stopFreqMhz=stopFreq, stopFreqKhz=0, \
+		            freqResolution=203, modFormat=2, activateAGC=1, agcLnaGain=0, \
+		            agcLna2Gain=7, agcDvgaGain=7, rssiWait=1000)
+		randTimer=time.time()
 	amtRssiValues=int((stopFreq-startFreq)/(testScanOptions.freqResolution/1000.0))
 	dataPayloadFormat=str(amtRssiValues)+"b"
 	#Generate the amount of random RSSI values specified by amtRssiValues
@@ -116,5 +115,4 @@ while args.packetLimit==None or pktSent<args.packetLimit:
 		send(pkt)
 	pktSent+=1
 
-	time.sleep(args.packetWait/1000.0)
-    
+	time.sleep(args.packetWait/1000.0)  

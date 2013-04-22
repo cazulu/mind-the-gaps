@@ -20,12 +20,12 @@ class UdpScanProt():
 	headerFormat='<2sH'
 	optFormat='<HHHHHBBBBBxH'
 	Header=collections.namedtuple('ProtHeader', 'protId protLen')
-	Opt=collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
-									stopFreqMhz stopFreqKhz freqResolution modFormat activateAGC \
-									agcLnaGain agcLna2Gain agcDvgaGain rssiWait')
-	defaultOpt = Opt(startFreqMhz=779, startFreqKhz=0, stopFreqMhz=928, stopFreqKhz=0, \
-			     freqResolution=203, modFormat=3, activateAGC=1, agcLnaGain=0, \
-			     agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
+	Opt=collections.namedtuple('ScanOptions', 'freqStartMhz freqStartKhz \
+									freqStopMhz freqStopKhz freqRes modFormat agcEnabled \
+									lnaGain lna2Gain dvgaGain rssiWait')
+	defaultOpt = Opt(freqStartMhz=779, freqStartKhz=0, freqStopMhz=928, freqStopKhz=0, \
+			     freqRes=203, modFormat=2, agcEnabled=1, lnaGain=0, \
+			     lna2Gain=7, dvgaGain=7, rssiWait=1000)
 	modFormatDict={'2-FSK':0,
 				 	'GFSK':1,
 					'ASK':2,
@@ -49,6 +49,7 @@ class UdpScannerServer(threading.Thread):
 		'''
 		
 		self.udpBuflen = 8192
+		self.sock=None
 		
 		#Dictionary that maps each active client IP address to its protocol handler
 		#and the state machine queue
@@ -75,30 +76,30 @@ class UdpScannerServer(threading.Thread):
 		self.start()
 	
 	def run(self):
-		self.sock = socket.socket(socket.AF_INET, # Internet
-			socket.SOCK_DGRAM) # UDP
-		#Bind without specifying IP address to listen in all the interfaces
-		self.sock.bind(("", UdpScanProt.listenPort))
-		self.sock.setblocking(False)
-		
-		while self.alive.isSet():
-			readable, _, _ = select.select([self.sock],[],[],1)
-			if self.sock in readable:
-				dataChunk, ipPortTuple=self.sock.recvfrom(self.udpBuflen)
-				self.addr=ipPortTuple[0]
-				#print "Received a UDP packet of",len(dataChunk),"bytes from:", self.addr
-				#Check if this is a new client and add it to the dictionary
-				#or if the associated state machine timed out
-				if not self.clientDict.has_key(self.addr) or not self.clientDict[self.addr].scannerSM.isAlive():
-					#New client, start a protocol handler thread
-					#and create the communication queue
-					udpChunkQueue=Queue.Queue()
-					self.clientDict[self.addr]=self.ClientHandler(udpChunkQueue=udpChunkQueue, scannerSM=UdpScannerSM(self.addr, udpChunkQueue, self.scanDataQueue))
-				#Process the incoming UDP data
-				self.clientDict[self.addr].udpChunkQueue.put(dataChunk)
-				
-	def get_h5_lock(self):
-		return self.h5FileLock
+		try:
+			self.sock = socket.socket(socket.AF_INET, # Internet
+				socket.SOCK_DGRAM) # UDP
+			#Bind without specifying IP address to listen in all the interfaces
+			self.sock.bind(("", UdpScanProt.listenPort))
+			self.sock.setblocking(False)
+			
+			while self.alive.isSet():
+				readable, _, _ = select.select([self.sock],[],[],1)
+				if self.sock in readable:
+					dataChunk, ipPortTuple=self.sock.recvfrom(self.udpBuflen)
+					self.addr=ipPortTuple[0]
+					#print "Received a UDP packet of",len(dataChunk),"bytes from:", self.addr
+					#Check if this is a new client and add it to the dictionary
+					#or if the associated state machine timed out
+					if not self.clientDict.has_key(self.addr) or not self.clientDict[self.addr].scannerSM.isAlive():
+						#New client, start a protocol handler thread
+						#and create the communication queue
+						udpChunkQueue=Queue.Queue()
+						self.clientDict[self.addr]=self.ClientHandler(udpChunkQueue=udpChunkQueue, scannerSM=UdpScannerSM(self.addr, udpChunkQueue, self.scanDataQueue))
+					#Process the incoming UDP data
+					self.clientDict[self.addr].udpChunkQueue.put(dataChunk)
+		finally:
+			self.sock.close()
 		
 	def close_backend(self):
 		'''
@@ -198,11 +199,11 @@ class UdpScannerSM(threading.Thread):
 			self.recvScanOptions=UdpScanProt.Opt._make(struct.unpack_from(UdpScanProt.optFormat, bytes(self.protBuffer)))
 			del self.protBuffer[:struct.calcsize(UdpScanProt.optFormat)]
 			#print "**Scan options received**"
-			startFreq=float(self.recvScanOptions.startFreqMhz) + self.recvScanOptions.startFreqKhz/1000.0
-			stopFreq=float(self.recvScanOptions.stopFreqMhz) + self.recvScanOptions.stopFreqKhz/1000.0
-			#print "Start frequency(MHz):", startFreq
-			#print "Stop frequency(MHz):", stopFreq
-			#print "Frequency resolution(KHz):", self.recvScanOptions.freqResolution
+			freqStart=float(self.recvScanOptions.freqStartMhz) + self.recvScanOptions.freqStartKhz/1000.0
+			freqStop=float(self.recvScanOptions.freqStopMhz) + self.recvScanOptions.freqStopKhz/1000.0
+			#print "Start frequency(MHz):", freqStart
+			#print "Stop frequency(MHz):", freqStop
+			#print "Frequency resolution(KHz):", self.recvScanOptions.freqRes
 			return self.protRecvData
 		else:
 			self.msgExpected=True
@@ -216,7 +217,7 @@ class UdpScannerSM(threading.Thread):
 			del self.protBuffer[:struct.calcsize(self.dataPayloadFormat)]
 			
 			#Convert the RSSI data to dBm
-			rssiDbmData = [(int(x)-2*74+1)>>1 for x in rssiByteData]
+			rssiDbmData = [(int(x)-2*74+1)/2.0 for x in rssiByteData]
 			#rssiDbmData = [x if x>=-120 else -70 for x in rssiDbmData]
 			self.rssiData=np.array(rssiDbmData)
 			#print "RSSI data: ", self.rssiData
@@ -273,14 +274,10 @@ class UdpScannerClient(threading.Thread):
 	'''
 	Thread used to send the current scan options to a board of the grid
 	'''
-	def __init__(self, scannerAddr, freqStart, freqStop, freqRes, 
-						modFormat, agcEnable, agcLnaGain, agcLna2Gain, agcDvgaGain, rssiWait):
-		self.scannerAddr=scannerAddr
-		self.scanOptions=UdpScanProt.Opt(startFreqMhz=int(freqStart), startFreqKhz=int((freqStart-int(freqStart))*1000), \
-										 stopFreqMhz=int(freqStop), stopFreqKhz=int((freqStop-int(freqStop))*1000), \
-										 freqResolution=int(freqRes), modFormat=UdpScanProt.modFormatDict[modFormat], \
-										 activateAGC=1 if agcEnable else 0, agcLnaGain=agcLnaGain, agcLna2Gain=agcLna2Gain, \
-										 agcDvgaGain=agcDvgaGain, rssiWait=int(rssiWait))
+	def __init__(self, sock, boardIpList, scanOpt):
+		self.sock=sock
+		self.boardIpList=boardIpList
+		self.scanOpt=scanOpt
 		
 		#Protocol parameters
 		self.pkgLen=struct.calcsize(UdpScanProt.optFormat)+struct.calcsize(UdpScanProt.headerFormat)
@@ -290,16 +287,15 @@ class UdpScannerClient(threading.Thread):
 		self.start()
 		
 	def run(self):
-		self.sock = socket.socket(socket.AF_INET, # Internet
-		                          socket.SOCK_DGRAM) # UDP
-		bytesToSend=self.pkgLen
-		#Store the header and the options
-		packed_data = struct.pack(UdpScanProt.headerFormat, *self.protHeader)
-		packed_data += struct.pack(UdpScanProt.optFormat, *self.scanOptions)
-		#Send the new options to the microcontroller platform
-		while bytesToSend>0:
-			bytesToSend-=self.sock.sendto(packed_data, (self.scannerAddr, UdpScanProt.listenPort))
-		self.sock.close()
+		#Send the scan options to all the boards in the grid
+		for boardIp in self.boardIpList:
+			bytesToSend=self.pkgLen
+			#Store the header and the options
+			packed_data = struct.pack(UdpScanProt.headerFormat, *self.protHeader)
+			packed_data += struct.pack(UdpScanProt.optFormat, *self.scanOpt)
+			#Send the new options to the microcontroller platform
+			while bytesToSend>0:
+				bytesToSend-=self.sock.sendto(packed_data, (boardIp, UdpScanProt.listenPort))
 
 if __name__ == '__main__':
 	print "Starting UDP scanner server backend"

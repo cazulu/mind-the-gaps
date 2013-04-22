@@ -11,8 +11,7 @@ import wx.lib.agw.floatspin as FS
 import wx.lib.agw.ultimatelistctrl as ULC
 import wx.lib.customtreectrl as CT
 import datetime
-from scannerUdpBackend import UdpScannerServer
-from scannerUdpBackend import UdpScannerClient
+from scannerUdpBackend import UdpScannerServer, UdpScannerClient, UdpScanProt
 
 # Use wx with matplotlib with the WXAgg backend. 
 import matplotlib
@@ -183,7 +182,7 @@ class ScanPlotPanel(wx.Panel):
         Call the print_figure method of the FigureCanvas to store the image in a PNG file
         :param path: Full path of the file where the plot will be saved
         '''
-        self.canvas.print_figure(path, dpi=self.figure.get_dpi())
+        self.canvas.print_figure(path, dpi=self.fig.get_dpi())
             
 class ScannerGUI(wx.Frame):
     def __init__(self, parent):
@@ -229,10 +228,15 @@ class ScannerGUI(wx.Frame):
         #Start the UDP backend
         self.udpScanServer=UdpScannerServer(guiActive=True)
         #Get the HDF5 file lock identifier
-        self.h5FileLock=self.udpScanServer.get_h5_lock()
+        self.h5FileLock=self.udpScanServer.h5FileLock
         
         #Bool that controls whether or not the user changed the scan settings
         self.scanOptChanged=False
+        #Latest scan options received from the grid
+        self.recvScanOptTimestamp=0
+        self.recvScanOpt=UdpScanProt.defaultOpt
+        #Scan options defined by the user through the scan settings
+        self.sendScanOpt=UdpScanProt.defaultOpt
         #Timer that triggers the sending of the scan settings to the boards of the grid
         self.sendScanOptTimer=wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_sendScanOpt_timer, self.sendScanOptTimer)
@@ -341,18 +345,18 @@ class ScannerGUI(wx.Frame):
         self.settingsTree.EnableItem(self.lnaGainItem, enable=False, torefresh=True)
         self.Bind(wx.EVT_SPINCTRL, self.on_gain_change, self.lnaGainSpinCtrl)
         
-        self.lna2GainSpinCtrl=wx.SpinCtrl(self.settingsTree, -1, min=0, max=7, initial=0, style=wx.ALIGN_LEFT|wx.SP_ARROW_KEYS)
+        self.lna2GainSpinCtrl=wx.SpinCtrl(self.settingsTree, -1, min=0, max=7, initial=7, style=wx.ALIGN_LEFT|wx.SP_ARROW_KEYS)
         self.lna2GainItem = self.settingsTree.AppendItem(gainItem, "LNA2 Gain", wnd=self.lna2GainSpinCtrl)
         self.settingsTree.EnableItem(self.lna2GainItem, enable=False, torefresh=True)
         self.Bind(wx.EVT_SPINCTRL, self.on_gain_change, self.lna2GainSpinCtrl)
         
-        self.dvgaGainSpinCtrl=wx.SpinCtrl(self.settingsTree, -1, min=0, max=7, initial=0, style=wx.ALIGN_LEFT|wx.SP_ARROW_KEYS)
+        self.dvgaGainSpinCtrl=wx.SpinCtrl(self.settingsTree, -1, min=0, max=7, initial=7, style=wx.ALIGN_LEFT|wx.SP_ARROW_KEYS)
         self.dvgaGainItem = self.settingsTree.AppendItem(gainItem, "DVGA Gain", wnd=self.dvgaGainSpinCtrl)
         self.settingsTree.EnableItem(self.dvgaGainItem, enable=False, torefresh=True)
         self.Bind(wx.EVT_SPINCTRL, self.on_gain_change, self.dvgaGainSpinCtrl)
         
         self.rssiWaitSpinCtrl=FS.FloatSpin(self.settingsTree, -1, min_val=0.25, max_val=100,
-                                         increment=1, digits=2, value=5, agwStyle=FS.FS_LEFT)
+                                         increment=1, digits=2, value=10, agwStyle=FS.FS_LEFT)
         rssiWaitItem = self.settingsTree.AppendItem(timingItem, "RSSI wait(ms)", wnd=self.rssiWaitSpinCtrl)
         self.Bind(FS.EVT_FLOATSPIN, self.on_timing_change, self.rssiWaitSpinCtrl)
         
@@ -366,20 +370,33 @@ class ScannerGUI(wx.Frame):
         sends the new options to all the active boards in the grid
         :param event: wx.Timer event
         '''
-        if self.scanOptChanged:
+        if self.recvScanOpt!=self.sendScanOpt:
+            print "Changed options: \n Send opt: \n", self.sendScanOpt, "\n Rev opt: \n", self.recvScanOpt
+        
+        if self.scanOptChanged or self.recvScanOpt!=self.sendScanOpt:
+            #Update the current options to be sent
+            if self.scanOptChanged:
+                self.sendScanOpt=UdpScanProt.Opt(freqStartMhz=int(self.freqStartSpinCtrl.GetValue()), \
+                                                 freqStartKhz=int((self.freqStartSpinCtrl.GetValue()-int(self.freqStartSpinCtrl.GetValue()))*1000), \
+                                                 freqStopMhz=int(self.freqStopSpinCtrl.GetValue()), \
+                                                 freqStopKhz=int((self.freqStopSpinCtrl.GetValue()-int(self.freqStopSpinCtrl.GetValue()))*1000), \
+                                                 freqRes=int(self.freqResBox.GetValue()), \
+                                                 modFormat=UdpScanProt.modFormatDict[self.modFormatBox.GetValue()], \
+                                                 agcEnabled=self.settingsTree.IsItemChecked(self.agcEnableItem), \
+                                                 lnaGain=int(self.lnaGainSpinCtrl.GetValue()), \
+                                                 lna2Gain=int(self.lna2GainSpinCtrl.GetValue()), \
+                                                 dvgaGain=int(self.dvgaGainSpinCtrl.GetValue()), \
+                                                 rssiWait=int(self.rssiWaitSpinCtrl.GetValue()*1000))
             maxIndex=self.boardList.GetItemCount()
-            #Start a client thread per board to send the scan options
+            boardIpList=[]
             for index in range(0, maxIndex):
                 boardIp=self.boardList.GetItem(index, 0).GetText()
                 #Check if the board is alive before sending the options
-                if self.boardList.GetItem(index, 1).GetText()!='Active':
-                    continue
-                print "Sending opt to "+boardIp
-                UdpScannerClient(scannerAddr=boardIp, freqStart=self.freqStartSpinCtrl.GetValue(), 
-                                 freqStop=self.freqStopSpinCtrl.GetValue(), freqRes=self.freqResBox.GetValue(), 
-                                 modFormat=self.modFormatBox.GetValue(), agcEnable=self.settingsTree.IsItemChecked(self.agcEnableItem), 
-                                 agcLnaGain=self.lna2GainSpinCtrl.GetValue(), agcLna2Gain=self.lna2GainSpinCtrl.GetValue(), 
-                                 agcDvgaGain=self.dvgaGainSpinCtrl.GetValue(), rssiWait=self.rssiWaitSpinCtrl.GetValue())
+                if self.boardList.GetItem(index, 1).GetText()=='Active':
+                    boardIpList.append(boardIp)
+            if len(boardIpList)>0 and self.udpScanServer.sock!=None:
+                UdpScannerClient(self.udpScanServer.sock, boardIpList, self.sendScanOpt)
+                
             self.scanOptChanged=False
         
     def on_pollh5_timer(self, event):
@@ -436,6 +453,20 @@ class ScannerGUI(wx.Frame):
                     self.boardList.SetItem(statItem)
                     self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("indian red"))
                     self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became inactive")
+                    
+            #Get the scan options of the node with the most recent timestamp
+            if node.cols.isAlive[0] and node.cols.timestamp[len(node)-1]>self.recvScanOptTimestamp:
+                self.recvScanOpt=UdpScanProt.Opt(freqStartMhz=int(node.cols.freqStart[0]), \
+                                                 freqStartKhz=int((node.cols.freqStart[0]-int(node.cols.freqStart[0]))*1000), \
+                                                 freqStopMhz=int(node.cols.freqStop[0]), \
+                                                 freqStopKhz=int((node.cols.freqStop[0]-int(node.cols.freqStop[0]))*1000), \
+                                                 freqRes=int(node.cols.freqRes[0]), \
+                                                 modFormat=int(node.cols.modFormat[0]), \
+                                                 agcEnabled=int(node.cols.agcEnabled[0]), \
+                                                 lnaGain=int(node.cols.lnaGain[0]), \
+                                                 lna2Gain=int(node.cols.lna2Gain[0]), \
+                                                 dvgaGain=int(node.cols.dvgaGain[0]), \
+                                                 rssiWait=int(node.cols.rssiWait[0]))
                     
             #If there is new data, update the board selected in the list,
             #if there is none we pick the first board of the HDF5 file
@@ -502,7 +533,7 @@ class ScannerGUI(wx.Frame):
         elif event.GetEventObject()==self.freqResBox:
             self.freqStartSpinCtrl.SetIncrement(float(self.freqResBox.GetValue())/1000.0)
             self.freqStopSpinCtrl.SetIncrement(float(self.freqResBox.GetValue())/1000.0)
-            
+
     def on_gain_change(self, event):
         '''
         Function triggered when the user changes the gain values of the different amplifier stages

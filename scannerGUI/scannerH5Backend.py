@@ -1,11 +1,10 @@
 #!/usr/bin/python
 
-import os
 import datetime
+import os
 import tables as tb
 import threading
 import time
-import collections
     
 class H5ScannerThread(threading.Thread):
     '''
@@ -22,10 +21,6 @@ class H5ScannerThread(threading.Thread):
         '''
         self.scanQueue = scanQueue
         self.h5FileLock=h5FileLock
-        self.ScanResults=collections.namedtuple('ScanResult', 'clientAddr recvOpt rssiData')
-        self.ScanOptions = collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
-                    stopFreqMhz stopFreqKhz freqResolution modFormat activateAGC \
-                    agcLnaGain agcLna2Gain agcDvgaGain rssiWait')
         
         threading.Thread.__init__(self)
         self.alive = threading.Event()
@@ -55,7 +50,7 @@ class H5ScannerThread(threading.Thread):
                 self.alive.clear()
                 break
             
-            scanResults=self.ScanResults(*qResult)
+            scanResults=qResult
             
             if scanResults.rssiData!=None:
                 #Create the table description based on the scan options!
@@ -64,10 +59,16 @@ class H5ScannerThread(threading.Thread):
                                'freqStart':tb.Float32Col(1),
                                'freqStop':tb.Float32Col(1),
                                'freqRes':tb.Float32Col(1),
+                               'modFormat':tb.UInt8Col(1),
+                               'agcEnabled':tb.BoolCol(1),
+                               'lnaGain':tb.UInt8Col(1),
+                               'lna2Gain':tb.UInt8Col(1),
+                               'dvgaGain':tb.UInt8Col(1),
+                               'rssiWait':tb.UInt32Col(1),
                                'timestamp':tb.Time64Col(1),
-                               'rssiData':tb.Int32Col(shape=(len(scanResults.rssiData),))}
+                               'rssiData':tb.Float32Col(shape=(len(scanResults.rssiData),))}
                 
-                scanOpt=self.ScanOptions(*scanResults.recvOpt)
+                scanOpt=scanResults.recvOpt
             
             
             #Obtain the table associated with the node IP address 
@@ -90,9 +91,15 @@ class H5ScannerThread(threading.Thread):
                     #Reset the node if it was inactive in the previous iteration
                     #or if the scan options have changed
                     if table.nrows>0 and not table.cols.isAlive[0] \
-                        or table.cols.freqStart[0]!=(scanOpt.startFreqMhz+scanOpt.startFreqKhz/1000.0) \
-                        or table.cols.freqStop[0]!=(scanOpt.stopFreqMhz+scanOpt.stopFreqKhz/1000.0) \
-                        or table.cols.freqRes[0]!=(scanOpt.freqResolution):
+                        or table.cols.freqStart[0]!=scanOpt.freqStartMhz+scanOpt.freqStartKhz/1000.0 \
+                        or table.cols.freqStop[0]!=scanOpt.freqStopMhz+scanOpt.freqStopKhz/1000.0 \
+                        or table.cols.freqRes[0]!=scanOpt.freqRes \
+                        or table.cols.modFormat[0]!=scanOpt.modFormat \
+                        or table.cols.agcEnabled[0]!=scanOpt.agcEnabled!=0 \
+                        or table.cols.lnaGain[0]!=scanOpt.lnaGain \
+                        or table.cols.lna2Gain[0]!=scanOpt.lna2Gain \
+                        or table.cols.dvgaGain[0]!=scanOpt.dvgaGain \
+                        or table.cols.rssiWait[0]!=scanOpt.rssiWait:
                         self.h5File.removeNode(self.h5Group, name="node"+str(nodeNumber), recursive=True)
                         table=self.h5File.createTable(self.h5Group, "node"+str(nodeNumber), scanTableDesc, "Node with the IP " + str(scanResults.clientAddr))
                         self.h5File.flush()                
@@ -102,13 +109,20 @@ class H5ScannerThread(threading.Thread):
                     table.modifyColumn(start=0, stop=None, step=1, column=False, colname='isAlive')
                 else:
                     #Store the scan data in the table
-                    table.row['ipAddr']=str(scanResults.clientAddr)
-                    table.row['isAlive']=True
-                    table.row['freqStart']=scanOpt.startFreqMhz + scanOpt.startFreqKhz/1000.0
-                    table.row['freqStop']=scanOpt.stopFreqMhz + scanOpt.stopFreqKhz/1000.0
-                    table.row['freqRes']=scanOpt.freqResolution
                     table.row['timestamp']=time.time()
                     table.row['rssiData']=scanResults.rssiData
+                    table.row['ipAddr']=str(scanResults.clientAddr)
+                    table.row['isAlive']=True
+                    table.row['freqStart']=scanOpt.freqStartMhz + scanOpt.freqStartKhz/1000.0
+                    table.row['freqStop']=scanOpt.freqStopMhz + scanOpt.freqStopKhz/1000.0
+                    table.row['freqRes']=scanOpt.freqRes
+                    table.row['modFormat']=scanOpt.modFormat
+                    table.row['agcEnabled']=scanOpt.agcEnabled!=0
+                    table.row['lnaGain']=scanOpt.lnaGain
+                    table.row['lna2Gain']=scanOpt.lna2Gain
+                    table.row['dvgaGain']=scanOpt.dvgaGain
+                    table.row['rssiWait']=scanOpt.rssiWait
+                    #print "The written value of rssiWait is: ", scanOpt.rssiWait
                     table.row.append()
                     table.flush()
         
