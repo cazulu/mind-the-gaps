@@ -35,6 +35,7 @@ class ScanPlotPanel(wx.Panel):
         self.minData = np.arange(779, 928)
         self.freqStart=779
         self.freqStop=928
+        self.freqRes=203
         #Index of the last RSSI array processed
         self.rssiIndex=0
         #IP of the current scanner node associated with this plot
@@ -93,8 +94,8 @@ class ScanPlotPanel(wx.Panel):
         Redraws the plot
         """
         
-        ymin = round(min(self.minData)) - 1
-        ymax = round(max(self.maxData)) + 1
+        ymin = round(self.minData.min()) - 1
+        ymax = round(self.maxData.max()) + 1
 
 #        if self.cb_yAutoRange.IsChecked():
 #            ymin = round(min(self.minData)) - 1
@@ -137,25 +138,35 @@ class ScanPlotPanel(wx.Panel):
         #since the previous iteration
         if self.ipAddr!=h5table.cols.ipAddr[0] \
             or self.freqStart!=h5table.cols.freqStart[0] \
-            or self.freqStart!=h5table.cols.freqStop[0]:
-            self.axes.set_title("Scan results from the detector with IP "+h5table.cols.ipAddr[0]+" "+
-                                datetime.datetime.fromtimestamp(h5table.cols.timestamp[len(h5table)-1]).strftime('%c'), size='medium')
+            or self.freqStop!=h5table.cols.freqStop[0] \
+            or self.freqRes!=h5table.cols.freqRes[0]:
             self.rssiIndex=0
             self.ipAddr=h5table.cols.ipAddr[0]
             self.freqStart=h5table.cols.freqStart[0]
             self.freqStop=h5table.cols.freqStop[0]
+            self.freqRes=h5table.cols.freqRes[0]
+        
+        if self.rssiIndex<len(h5table)-1:
+            partialAvg=h5table.cols.rssiData[self.rssiIndex:].mean(axis=0)
+            partialMin=h5table.cols.rssiData[self.rssiIndex:].min(axis=0)
+            partialMax=h5table.cols.rssiData[self.rssiIndex:].max(axis=0)
+        else:
+            partialAvg=h5table.cols.rssiData[self.rssiIndex:]
+            partialMin=h5table.cols.rssiData[self.rssiIndex:]
+            partialMax=h5table.cols.rssiData[self.rssiIndex:]
         
         if self.rssiIndex==0:
-            self.avgData=np.mean(h5table.cols.rssiData[:], axis=0)
-            self.minData=np.amin(h5table.cols.rssiData[:], axis=0)
-            self.maxData=np.amax(h5table.cols.rssiData[:], axis=0)
+            self.avgData=partialAvg
+            self.minData=partialMin
+            self.maxData=partialMax
         else:
-            partialAvg=np.mean(h5table.cols.rssiData[self.rssiIndex:], axis=0)
-            self.avgData=np.average(np.hstack(self.avgData, partialAvg), axis=0, weights=[self.rssiIndex, len(h5table)-self.rssiIndex])
-            self.minData=np.amin(np.hstack(self.minData, h5table.cols.rssiData[:]), axis=0)
-            self.maxData=np.amin(np.hstack(self.maxData, h5table.cols.rssiData[:]), axis=0)
-        self.rssiIndex=len(h5table.cols.rssiData[:])
+            self.avgData=np.average(np.vstack((self.avgData, partialAvg)), axis=0, weights=[self.rssiIndex, len(h5table)-self.rssiIndex])
+            self.minData=np.vstack((self.minData, partialMin)).min(axis=0)
+            self.maxData=np.vstack((self.maxData, partialMax)).max(axis=0)
+        self.rssiIndex=len(h5table)
         
+        self.axes.set_title("Scan results from the detector with IP "+h5table.cols.ipAddr[0]+" as of "+
+                    datetime.datetime.fromtimestamp(h5table.cols.timestamp[len(h5table)-1]).strftime('%c'), size='medium')
         self.draw_plot()
             
     def on_resize(self, evt):
@@ -240,13 +251,13 @@ class ScannerGUI(wx.Frame):
         #Timer that triggers the sending of the scan settings to the boards of the grid
         self.sendScanOptTimer=wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_sendScanOpt_timer, self.sendScanOptTimer)
-        self.sendScanOptTimer.Start(1000)
+        self.sendScanOptTimer.Start(2000)
         
         
         #Create the timer for checking the HDF5 scan data
         self.h5Timer=wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_pollh5_timer, self.h5Timer)
-        self.h5Timer.Start(100)
+        self.h5Timer.Start(250)
         
     def create_menu(self):
         self.menubar=wx.MenuBar()
@@ -288,11 +299,12 @@ class ScannerGUI(wx.Frame):
         self.boardList = ULC.UltimateListCtrl(self, wx.ID_ANY, size=wx.DefaultSize ,agwStyle=wx.LC_REPORT)
         self.boardList.InsertColumn(0, "IP", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
         self.boardList.InsertColumn(1, "Status", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
+        self.boardList.InsertColumn(2, "Join date", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
         #self.boardList.InsertColumn(2, "Location", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
         
         #Bind the event of double clicking or pressing enter on top of a list item,
         #used to change the board being plotted in the main window
-        self.Bind(ULC.EVT_LIST_ITEM_ACTIVATED, self.on_boardListItem_activated, self.boardList)
+        self.Bind(ULC.EVT_LIST_ITEM_SELECTED, self.on_boardListItem_selected, self.boardList)
         
     def create_settingsTree(self):
         '''
@@ -311,12 +323,12 @@ class ScannerGUI(wx.Frame):
         gainItem = self.settingsTree.AppendItem(scanOptItem, "Gain")
         timingItem = self.settingsTree.AppendItem(scanOptItem, "Timing")
         
-        self.freqStartSpinCtrl = FS.FloatSpin(self.settingsTree, -1, min_val=780, max_val=927.797,
-                                         increment=0.203, digits=3, value=780, agwStyle=FS.FS_LEFT)
+        self.freqStartSpinCtrl = FS.FloatSpin(self.settingsTree, -1, min_val=779, max_val=927.797,
+                                         increment=0.203, digits=3, value=779, agwStyle=FS.FS_LEFT)
         freqStartItem = self.settingsTree.AppendItem(freqRangeItem, "Start(MHz)", wnd=self.freqStartSpinCtrl)
         self.Bind(FS.EVT_FLOATSPIN, self.on_freqRange_change, self.freqStartSpinCtrl)
         
-        self.freqStopSpinCtrl = FS.FloatSpin(self.settingsTree, -1, min_val=780.203, max_val=928,
+        self.freqStopSpinCtrl = FS.FloatSpin(self.settingsTree, -1, min_val=779.203, max_val=928,
                                          increment=0.203, digits=3, value=928, agwStyle=FS.FS_LEFT)
         freqStopItem = self.settingsTree.AppendItem(freqRangeItem, "Stop(MHz)", wnd=self.freqStopSpinCtrl)
         self.Bind(FS.EVT_FLOATSPIN, self.on_freqRange_change, self.freqStopSpinCtrl)
@@ -369,35 +381,38 @@ class ScannerGUI(wx.Frame):
         checks if the scan options have changed and in that case
         sends the new options to all the active boards in the grid
         :param event: wx.Timer event
-        '''
-        if self.recvScanOpt!=self.sendScanOpt:
-            print "Changed options: \n Send opt: \n", self.sendScanOpt, "\n Rev opt: \n", self.recvScanOpt
+        '''         
+        #Update the current options to be sent
+        if self.scanOptChanged:
+            self.sendScanOpt=UdpScanProt.Opt(freqStartMhz=int(self.freqStartSpinCtrl.GetValue()), \
+                                             freqStartKhz=int((self.freqStartSpinCtrl.GetValue()-int(self.freqStartSpinCtrl.GetValue()))*1000), \
+                                             freqStopMhz=int(self.freqStopSpinCtrl.GetValue()), \
+                                             freqStopKhz=int((self.freqStopSpinCtrl.GetValue()-int(self.freqStopSpinCtrl.GetValue()))*1000), \
+                                             freqRes=int(self.freqResBox.GetValue()), \
+                                             modFormat=UdpScanProt.modFormatDict[self.modFormatBox.GetValue()], \
+                                             agcEnabled=1 if self.settingsTree.IsItemChecked(self.agcEnableItem) else 0, \
+                                             lnaGain=int(self.lnaGainSpinCtrl.GetValue()), \
+                                             lna2Gain=int(self.lna2GainSpinCtrl.GetValue()), \
+                                             dvgaGain=int(self.dvgaGainSpinCtrl.GetValue()), \
+                                             rssiWait=int(self.rssiWaitSpinCtrl.GetValue()*1000))
+            self.scanOptChanged=False
+            
+#         if self.recvScanOpt!=self.sendScanOpt:
+#             print "Changed options: \n Send opt: \n", self.sendScanOpt, "\n Rev opt: \n", self.recvScanOpt
         
-        if self.scanOptChanged or self.recvScanOpt!=self.sendScanOpt:
-            #Update the current options to be sent
-            if self.scanOptChanged:
-                self.sendScanOpt=UdpScanProt.Opt(freqStartMhz=int(self.freqStartSpinCtrl.GetValue()), \
-                                                 freqStartKhz=int((self.freqStartSpinCtrl.GetValue()-int(self.freqStartSpinCtrl.GetValue()))*1000), \
-                                                 freqStopMhz=int(self.freqStopSpinCtrl.GetValue()), \
-                                                 freqStopKhz=int((self.freqStopSpinCtrl.GetValue()-int(self.freqStopSpinCtrl.GetValue()))*1000), \
-                                                 freqRes=int(self.freqResBox.GetValue()), \
-                                                 modFormat=UdpScanProt.modFormatDict[self.modFormatBox.GetValue()], \
-                                                 agcEnabled=self.settingsTree.IsItemChecked(self.agcEnableItem), \
-                                                 lnaGain=int(self.lnaGainSpinCtrl.GetValue()), \
-                                                 lna2Gain=int(self.lna2GainSpinCtrl.GetValue()), \
-                                                 dvgaGain=int(self.dvgaGainSpinCtrl.GetValue()), \
-                                                 rssiWait=int(self.rssiWaitSpinCtrl.GetValue()*1000))
+        if self.recvScanOpt!=self.sendScanOpt:
             maxIndex=self.boardList.GetItemCount()
             boardIpList=[]
+            #Get a list of all the active boards to which we will send the new scan options
             for index in range(0, maxIndex):
                 boardIp=self.boardList.GetItem(index, 0).GetText()
-                #Check if the board is alive before sending the options
                 if self.boardList.GetItem(index, 1).GetText()=='Active':
-                    boardIpList.append(boardIp)
+                    #Ignore localhost
+                    if not boardIp.startswith("127."):
+                        boardIpList.append(boardIp)
             if len(boardIpList)>0 and self.udpScanServer.sock!=None:
+                #Start a thread to send the options
                 UdpScannerClient(self.udpScanServer.sock, boardIpList, self.sendScanOpt)
-                
-            self.scanOptChanged=False
         
     def on_pollh5_timer(self, event):
         '''
@@ -436,6 +451,7 @@ class ScannerGUI(wx.Frame):
                 if node.cols.isAlive[0]:
                     statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Active")
                     self.boardList.SetItemTextColour(statIndex, wx.NamedColour("forest green"))
+                    self.boardList.SetStringItem(ipIndex, col=2, label=datetime.datetime.fromtimestamp(node.cols.timestamp[0]).strftime('%c'))
                     self.flash_status_message("Detected a new active board with the IP "+node.cols.ipAddr[0])
                 else:
                     statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Inactive")
@@ -443,10 +459,13 @@ class ScannerGUI(wx.Frame):
                     self.flash_status_message("Detected a new inactive board with the IP "+node.cols.ipAddr[0])
             else:
                 statItem=self.boardList.GetItem(boardIndex, col=1)
+                joinItem=self.boardList.GetItem(boardIndex, col=2)
                 if node.cols.isAlive[0] and statItem.GetText()!="Active":
                     statItem.SetText("Active")
                     self.boardList.SetItem(statItem)
                     self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("forest green"))
+                    joinItem.SetText(datetime.datetime.fromtimestamp(node.cols.timestamp[0]).strftime('%c'))
+                    self.boardList.SetItem(joinItem)
                     self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became active")
                 elif not node.cols.isAlive[0] and statItem.GetText()!="Inactive":
                     statItem.SetText("Inactive")
@@ -461,7 +480,7 @@ class ScannerGUI(wx.Frame):
                                                  freqStopMhz=int(node.cols.freqStop[0]), \
                                                  freqStopKhz=int((node.cols.freqStop[0]-int(node.cols.freqStop[0]))*1000), \
                                                  freqRes=int(node.cols.freqRes[0]), \
-                                                 modFormat=int(node.cols.modFormat[0]), \
+                                                 modFormat=1 if node.cols.modFormat[0] else 0, \
                                                  agcEnabled=int(node.cols.agcEnabled[0]), \
                                                  lnaGain=int(node.cols.lnaGain[0]), \
                                                  lna2Gain=int(node.cols.lna2Gain[0]), \
@@ -493,11 +512,11 @@ class ScannerGUI(wx.Frame):
     def on_flash_status_off(self, event):
         self.statusbar.SetStatusText('')
         
-    def on_boardListItem_activated(self, event):
+    def on_boardListItem_selected(self, event):
         '''
-        Class triggered when the user presses enter or double clicks
-        on one board of the list, which becomes the one plotted in the main window
-        :param event: ULC.EVT_LIST_ITEM_ACTIVATED
+        Class triggered when the user selects one board of the list, 
+        which becomes the one plotted in the main window
+        :param event: ULC.EVT_LIST_ITEM_SELECTED
         '''
         self.ipPlottedBoard=event.GetText()
         self.plottedDataTimestamp=0

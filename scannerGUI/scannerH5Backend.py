@@ -106,7 +106,10 @@ class H5ScannerThread(threading.Thread):
                 
                 #If no RSSI data was included in the queue, we assume the board to be inactive
                 if scanResults.rssiData==None:
-                    table.modifyColumn(start=0, stop=None, step=1, column=False, colname='isAlive')
+                    for row in table:
+                        row['isAlive']=False
+                        row.update()
+                    table.flush()
                 else:
                     #Store the scan data in the table
                     table.row['timestamp']=time.time()
