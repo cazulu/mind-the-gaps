@@ -3,6 +3,7 @@
 import datetime
 import os
 import tables as tb
+import numpy as np
 import threading
 import time
     
@@ -66,7 +67,10 @@ class H5ScannerThread(threading.Thread):
                                'dvgaGain':tb.UInt8Col(1),
                                'rssiWait':tb.UInt32Col(1),
                                'timestamp':tb.Time64Col(1),
-                               'rssiData':tb.Float32Col(shape=(len(scanResults.rssiData),))}
+                               'rssiData':tb.Float32Col(shape=(len(scanResults.rssiData),)),
+                               'rssiMin':tb.Float32Col(shape=(len(scanResults.rssiData),)),
+                               'rssiAvg':tb.Float32Col(shape=(len(scanResults.rssiData),)),
+                               'rssiMax':tb.Float32Col(shape=(len(scanResults.rssiData),))}
                 
                 scanOpt=scanResults.recvOpt
             
@@ -111,9 +115,8 @@ class H5ScannerThread(threading.Thread):
                         row.update()
                     table.flush()
                 else:
-                    #Store the scan data in the table
+                    #Store the scan options in the table
                     table.row['timestamp']=time.time()
-                    table.row['rssiData']=scanResults.rssiData
                     table.row['ipAddr']=str(scanResults.clientAddr)
                     table.row['isAlive']=True
                     table.row['freqStart']=scanOpt.freqStartMhz + scanOpt.freqStartKhz/1000.0
@@ -125,7 +128,17 @@ class H5ScannerThread(threading.Thread):
                     table.row['lna2Gain']=scanOpt.lna2Gain
                     table.row['dvgaGain']=scanOpt.dvgaGain
                     table.row['rssiWait']=scanOpt.rssiWait
-                    #print "The written value of rssiWait is: ", scanOpt.rssiWait
+                    #Store the scan data and calculate its current max, min and avg
+                    table.row['rssiData']=scanResults.rssiData
+                    if len(table)>0:
+                        table.row['rssiAvg']=np.average(np.vstack((table.cols.rssiAvg[len(table)-1], scanResults.rssiData)), axis=0, weights=[len(table),1])
+                        table.row['rssiMin']=np.vstack((table.cols.rssiMin[len(table)-1], scanResults.rssiData)).min(axis=0)
+                        table.row['rssiMax']=self.maxData=np.vstack((table.cols.rssiMax[len(table)-1], scanResults.rssiData)).max(axis=0)
+                    else:
+                        table.row['rssiAvg']=scanResults.rssiData
+                        table.row['rssiMin']=scanResults.rssiData
+                        table.row['rssiMax']=scanResults.rssiData
+                    #Save the changes
                     table.row.append()
                     table.flush()
         

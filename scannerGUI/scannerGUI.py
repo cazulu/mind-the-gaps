@@ -46,6 +46,11 @@ class ScanPlotPanel(wx.Panel):
 
         #Bind the resize event to the resizing function to redraw the plot
         self.Bind(wx.EVT_SIZE, self.on_resize)
+        #Create the bool and the timer that control the redrawing of the plot
+        self.redrawNeeded=False
+        self.redrawTimer=wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.on_redraw_timer, self.redrawTimer)
+        self.redrawTimer.Start(500)
         
     def init_plot(self):
         #self.dpi = 200
@@ -134,40 +139,21 @@ class ScanPlotPanel(wx.Panel):
         :param h5table: HDF5 data table identifier, see the H5Backend code
         for details on the table fields
         '''
-        #Reset the RSSI array index if the node to plot changed
-        #since the previous iteration
-        if self.ipAddr!=h5table.cols.ipAddr[0] \
-            or self.freqStart!=h5table.cols.freqStart[0] \
-            or self.freqStop!=h5table.cols.freqStop[0] \
-            or self.freqRes!=h5table.cols.freqRes[0]:
-            self.rssiIndex=0
-            self.ipAddr=h5table.cols.ipAddr[0]
-            self.freqStart=h5table.cols.freqStart[0]
-            self.freqStop=h5table.cols.freqStop[0]
-            self.freqRes=h5table.cols.freqRes[0]
-        
-        if self.rssiIndex<len(h5table)-1:
-            partialAvg=h5table.cols.rssiData[self.rssiIndex:].mean(axis=0)
-            partialMin=h5table.cols.rssiData[self.rssiIndex:].min(axis=0)
-            partialMax=h5table.cols.rssiData[self.rssiIndex:].max(axis=0)
-        else:
-            partialAvg=h5table.cols.rssiData[self.rssiIndex:]
-            partialMin=h5table.cols.rssiData[self.rssiIndex:]
-            partialMax=h5table.cols.rssiData[self.rssiIndex:]
-        
-        if self.rssiIndex==0:
-            self.avgData=partialAvg
-            self.minData=partialMin
-            self.maxData=partialMax
-        else:
-            self.avgData=np.average(np.vstack((self.avgData, partialAvg)), axis=0, weights=[self.rssiIndex, len(h5table)-self.rssiIndex])
-            self.minData=np.vstack((self.minData, partialMin)).min(axis=0)
-            self.maxData=np.vstack((self.maxData, partialMax)).max(axis=0)
-        self.rssiIndex=len(h5table)
-        
+        self.maxData=h5table.cols.rssiMax[len(h5table)-1]
+        self.avgData=h5table.cols.rssiAvg[len(h5table)-1]
+        self.minData=h5table.cols.rssiMin[len(h5table)-1]
         self.axes.set_title("Scan results from the detector with IP "+h5table.cols.ipAddr[0]+" as of "+
                     datetime.datetime.fromtimestamp(h5table.cols.timestamp[len(h5table)-1]).strftime('%c'), size='medium')
-        self.draw_plot()
+        self.redrawNeeded=True
+        
+    def on_redraw_timer(self, evt):
+        '''
+        Function triggered by the redraw timer
+        :param evt: wx.EVT_TIMER
+        '''
+        if self.redrawNeeded:
+            self.draw_plot()
+            self.redrawNeeded=False
             
     def on_resize(self, evt):
         '''

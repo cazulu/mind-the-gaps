@@ -70,7 +70,7 @@ class UdpScannerServer(threading.Thread):
 		#Define a custom SIGINT handler to close all the associated threads
 		#if there is no GUI associated to take care of that task
 		if not guiActive:
-			signal.signal(signal.SIGINT, self.sigint_hand)
+			signal.signal(signal.SIGINT, self.sigint_handler)
 		
 		#Start the thread by default
 		self.start()
@@ -198,12 +198,6 @@ class UdpScannerSM(threading.Thread):
 		if len(self.protBuffer)>=struct.calcsize(UdpScanProt.optFormat):
 			self.recvScanOptions=UdpScanProt.Opt._make(struct.unpack_from(UdpScanProt.optFormat, bytes(self.protBuffer)))
 			del self.protBuffer[:struct.calcsize(UdpScanProt.optFormat)]
-			#print "**Scan options received**"
-			freqStart=float(self.recvScanOptions.freqStartMhz) + self.recvScanOptions.freqStartKhz/1000.0
-			freqStop=float(self.recvScanOptions.freqStopMhz) + self.recvScanOptions.freqStopKhz/1000.0
-			#print "Start frequency(MHz):", freqStart
-			#print "Stop frequency(MHz):", freqStop
-			#print "Frequency resolution(KHz):", self.recvScanOptions.freqRes
 			return self.protRecvData
 		else:
 			self.msgExpected=True
