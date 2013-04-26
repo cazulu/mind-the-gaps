@@ -17,9 +17,9 @@ class UdpScanProt():
 	'''
 	listenPort=9930
 	protId="GW"
-	headerFormat='<2sH'
+	headerFormat='<2sH6B'
 	optFormat='<HHHHHBBBBBxH'
-	Header=collections.namedtuple('ProtHeader', 'protId protLen')
+	Header=collections.namedtuple('ProtHeader', 'protId protLen macAddr')
 	Opt=collections.namedtuple('ScanOptions', 'freqStartMhz freqStartKhz \
 									freqStopMhz freqStopKhz freqRes modFormat agcEnabled \
 									lnaGain lna2Gain dvgaGain rssiWait')
@@ -123,6 +123,7 @@ class UdpScannerSM(threading.Thread):
 	
 	def __init__(self, clientAddr, udpChunkQueue, scanDataQueue):
 		self.clientAddr = clientAddr
+		self.macAddr=""
 		self.udpChunkQueue = udpChunkQueue
 		self.scanDataQueue = scanDataQueue
 		
@@ -171,7 +172,11 @@ class UdpScannerSM(threading.Thread):
 	def protRecvHeader(self):
 		#print "RECV_HEADER state"
 		if len(self.protBuffer)>=struct.calcsize(UdpScanProt.headerFormat):
-			protId, msgLen=struct.unpack_from(UdpScanProt.headerFormat, bytes(self.protBuffer))
+			protId, msgLen, macAddr=struct.unpack_from(UdpScanProt.headerFormat, bytes(self.protBuffer))
+			#Format the mac address for easier printing
+			print "Raw mac data: ", macAddr
+			self.macAddr="%02X:%02X:%02X:%02X:%02X:%02X" % struct.unpack("BBBBBB", macAddr)
+			print "Received a mac addr of ", self.macAddr
 			del self.protBuffer[:struct.calcsize(UdpScanProt.headerFormat)]
 			#print "The message protocol ID is:", protId
 			if protId==UdpScanProt.protId:

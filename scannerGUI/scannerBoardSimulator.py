@@ -4,11 +4,14 @@ import random
 import socket
 import collections
 import struct
+import binascii
 import argparse
 import os
+from scannerUdpBackend import UdpScanProt
 
 DFLT_SRC_IP = "127.0.0.1"
 DFLT_DST_IP = "127.0.0.1"
+DFLT_SRC_MAC = "02:00:00:00:00:01"
 SRC_PORT = 60000
 DST_PORT = 9930
 MIN_FREQ=779.0
@@ -28,6 +31,7 @@ group.add_argument("-R", "--randRange", help="Randomize the frequency range of t
 parser.add_argument("-r", "--freqResolution", help="Frequency resolution of the scan in Khz", type=float, default=DFLT_RES, metavar="Freq")
 parser.add_argument("-d", "--dstIP", help="IP address of the UDP frequency scanning server", default=DFLT_DST_IP, metavar="dstIP")
 parser.add_argument("-s", "--srcIP", help="Source IP address of the UDP frequency scanning packets", default=DFLT_SRC_IP, metavar="srcIP")
+parser.add_argument("-m", "--srcMAC", help="Source MAC address of the UDP frequency scanning packets", default=DFLT_SRC_MAC, metavar="srcMAC")
 parser.add_argument("-w", "--packetWait", help="Delay between UDP packets in ms", type=int, default=DFLT_PKT_DELAY, metavar="delay")
 parser.add_argument("-n", "--packetLimit", help="Number of packets to send", type=int, metavar='pktLim')
 args=parser.parse_args()
@@ -39,6 +43,9 @@ if args.srcIP!=DFLT_SRC_IP:
 		parser.error("Root privileges required to spoof the source IP address of a packet, try running the script again with sudo")
 	try:
 		from scapy.all import *
+		#Compute the mac addr based on the IP if there's no mac address specified
+		if args.srcMAC==DFLT_SRC_MAC:
+			args.srcMAC="%20:%01:%02X:%02X:%02X:%02X" % struct.unpack("BBBB", args.srcIP)
 	except ImportError, e:
 		parser.error("Scapy package not installed, required for spoofing source IP address. Try sudo apt-get install python-scapy")
 else:
@@ -60,20 +67,8 @@ if args.randRange:
 	randTimer=time.time()
 
 #Protocol parameters
-PROT_IDENTIFIER = "GW"
-protHeaderFormat = '<2sH'
-optHeaderFormat = '<HHHHHBBBBBxH'
 dataPayloadFormat = ''
-ProtHeader = collections.namedtuple('protHeader', 'protId protLen')
-ScanOptions = collections.namedtuple('ScanOptions', 'startFreqMhz startFreqKhz \
-				    stopFreqMhz stopFreqKhz freqResolution modFormat activateAGC \
-				    agcLnaGain agcLna2Gain agcDvgaGain rssiWait')
-
-testScanOptions = ScanOptions(startFreqMhz=int(startFreq), startFreqKhz=int((startFreq-int(startFreq))*1000), \
-				stopFreqMhz=int(stopFreq), stopFreqKhz=int((stopFreq-int(stopFreq))*1000), \
-				freqResolution=freqResolution, modFormat=2, activateAGC=1, agcLnaGain=0, \
-				agcLna2Gain=0, agcDvgaGain=0, rssiWait=1000)
-
+testScanOpt = UdpScanProt.defaultOpt
 pktSent=0
 
 while args.packetLimit==None or pktSent<args.packetLimit:
@@ -82,22 +77,29 @@ while args.packetLimit==None or pktSent<args.packetLimit:
 	if args.randRange and time.time()-randTimer>=DFLT_RAND_DELAY:
 		startFreq=random.randrange(int(MIN_FREQ), int((MAX_FREQ+MIN_FREQ)/2) -1)
 		stopFreq=random.randrange(int((MAX_FREQ+MIN_FREQ)/2 +1),int(MAX_FREQ))
-		testScanOptions=ScanOptions(startFreqMhz=startFreq, startFreqKhz=0, stopFreqMhz=stopFreq, stopFreqKhz=0, \
-		            freqResolution=203, modFormat=2, activateAGC=1, agcLnaGain=0, \
+		tesScanOpt=UdpScanProt.Opt(freqStartMhz=startFreq, freqStartKhz=0, freqStopMhz=stopFreq, freqStopKhz=0, \
+		            freqRes=203, modFormat=2, activateAGC=1, agcLnaGain=0, \
 		            agcLna2Gain=7, agcDvgaGain=7, rssiWait=1000)
 		randTimer=time.time()
-	amtRssiValues=int((stopFreq-startFreq)/(testScanOptions.freqResolution/1000.0))
+	amtRssiValues=int((stopFreq-startFreq)/(testScanOpt.freqRes/1000.0))
 	dataPayloadFormat=str(amtRssiValues)+"b"
 	#Generate the amount of random RSSI values specified by amtRssiValues
 	rssiValuesDbm=[random.randrange(-110,-90) for n in range(amtRssiValues)]
 	#Transform the RSSI values into the byte with offset notation
 	rssiValuesDec=[(x+74)*2 for x in rssiValuesDbm]
 	#Generate the packet header according to the scanner protocol format
-	pkgLen=struct.calcsize(dataPayloadFormat)+struct.calcsize(optHeaderFormat)+struct.calcsize(protHeaderFormat)
-	protHeader = ProtHeader(protId=PROT_IDENTIFIER, protLen=pkgLen)
-	packed_data = struct.pack(protHeaderFormat, protHeader.protId, protHeader.protLen)
+	pkgLen=struct.calcsize(dataPayloadFormat)+struct.calcsize(UdpScanProt.optFormat)+struct.calcsize(UdpScanProt.headerFormat)
+	macStr=args.srcMAC.replace(":", "")
+	mac=[]
+	j=0
+	for i in range(0,6):
+		mac.append(binascii.hexlify(macStr[j:j+1]))
+		j+=2
+	print "mac is ", mac
+	protHeader = UdpScanProt.Header(protId=UdpScanProt.protId, protLen=pkgLen, macAddr=mac)
+	packed_data = struct.pack(UdpScanProt.headerFormat, *protHeader)
 	#Add the default scan options
-	packed_data += struct.pack(optHeaderFormat, *testScanOptions)
+	packed_data += struct.pack(UdpScanProt.optFormat, *testScanOpt)
 	#Add the data payload
 	packed_data += struct.pack(dataPayloadFormat, *rssiValuesDec)
 	#Send the data using the scapy library if IP source spoofing is needed, otherwise use a normal socket

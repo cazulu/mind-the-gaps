@@ -142,6 +142,9 @@ class ScanPlotPanel(wx.Panel):
         self.maxData=h5table.cols.rssiMax[len(h5table)-1]
         self.avgData=h5table.cols.rssiAvg[len(h5table)-1]
         self.minData=h5table.cols.rssiMin[len(h5table)-1]
+        self.freqStart=h5table.cols.freqStart[0]
+        self.freqStop=h5table.cols.freqStop[0]
+        self.freqRes=h5table.cols.freqRes[0]
         self.axes.set_title("Scan results from the detector with IP "+h5table.cols.ipAddr[0]+" as of "+
                     datetime.datetime.fromtimestamp(h5table.cols.timestamp[len(h5table)-1]).strftime('%c'), size='medium')
         self.redrawNeeded=True
@@ -332,6 +335,7 @@ class ScannerGUI(wx.Frame):
         self.modFormatBox = wx.ComboBox(self.settingsTree, -1, choices=modFormatChoices, style=wx.CB_READONLY, size=(80,-1))
         self.modFormatBox.SetValue('ASK')
         modFormatItem = self.settingsTree.AppendItem(modItem, "Modulation format", wnd=self.modFormatBox)
+        self.Bind(wx.EVT_COMBOBOX, self.on_modFormat_change, self.modFormatBox)
         
         self.agcEnableItem = self.settingsTree.AppendItem(gainItem, "Enable AGC", ct_type=1)
         self.settingsTree.CheckItem(self.agcEnableItem, checked=True)
@@ -353,8 +357,8 @@ class ScannerGUI(wx.Frame):
         self.settingsTree.EnableItem(self.dvgaGainItem, enable=False, torefresh=True)
         self.Bind(wx.EVT_SPINCTRL, self.on_gain_change, self.dvgaGainSpinCtrl)
         
-        self.rssiWaitSpinCtrl=FS.FloatSpin(self.settingsTree, -1, min_val=0.25, max_val=100,
-                                         increment=1, digits=2, value=10, agwStyle=FS.FS_LEFT)
+        self.rssiWaitSpinCtrl=FS.FloatSpin(self.settingsTree, -1, min_val=0.25, max_val=65,
+                                         increment=1, digits=2, value=1, agwStyle=FS.FS_LEFT)
         rssiWaitItem = self.settingsTree.AppendItem(timingItem, "RSSI wait(ms)", wnd=self.rssiWaitSpinCtrl)
         self.Bind(FS.EVT_FLOATSPIN, self.on_timing_change, self.rssiWaitSpinCtrl)
         
@@ -383,9 +387,13 @@ class ScannerGUI(wx.Frame):
                                              rssiWait=int(self.rssiWaitSpinCtrl.GetValue()*1000))
             self.scanOptChanged=False
             
-#         if self.recvScanOpt!=self.sendScanOpt:
-#             print "Changed options: \n Send opt: \n", self.sendScanOpt, "\n Rev opt: \n", self.recvScanOpt
-        
+        if self.recvScanOpt!=self.sendScanOpt:
+            print "Changed options: \n Send opt: \n", self.sendScanOpt, "\n Rev opt: \n", self.recvScanOpt
+            for name in self.recvScanOpt._fields:
+                recValue=getattr(self.recvScanOpt, name)
+                sendValue=getattr(self.sendScanOpt, name)
+                if recValue!=sendValue:
+                    print "\n***The scan options differ in the ", name, " field: \n Sent: ", sendValue, " \tRecv: ", recValue
         if self.recvScanOpt!=self.sendScanOpt:
             maxIndex=self.boardList.GetItemCount()
             boardIpList=[]
@@ -466,8 +474,8 @@ class ScannerGUI(wx.Frame):
                                                  freqStopMhz=int(node.cols.freqStop[0]), \
                                                  freqStopKhz=int((node.cols.freqStop[0]-int(node.cols.freqStop[0]))*1000), \
                                                  freqRes=int(node.cols.freqRes[0]), \
-                                                 modFormat=1 if node.cols.modFormat[0] else 0, \
-                                                 agcEnabled=int(node.cols.agcEnabled[0]), \
+                                                 modFormat=int(node.cols.modFormat[0]), \
+                                                 agcEnabled=1 if node.cols.agcEnabled[0] else 0, \
                                                  lnaGain=int(node.cols.lnaGain[0]), \
                                                  lna2Gain=int(node.cols.lna2Gain[0]), \
                                                  dvgaGain=int(node.cols.dvgaGain[0]), \
