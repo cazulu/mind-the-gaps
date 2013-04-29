@@ -55,7 +55,8 @@ class H5ScannerThread(threading.Thread):
             
             if scanResults.rssiData!=None:
                 #Create the table description based on the scan options!
-                scanTableDesc={'ipAddr':tb.StringCol(13),
+                scanTableDesc={'macAddr':tb.StringCol(18),
+                               'ipAddr':tb.StringCol(13),
                                'isAlive':tb.BoolCol(1),
                                'freqStart':tb.Float32Col(1),
                                'freqStop':tb.Float32Col(1),
@@ -75,21 +76,24 @@ class H5ScannerThread(threading.Thread):
                 scanOpt=scanResults.recvOpt
             
             
-            #Obtain the table associated with the node IP address 
+            #Obtain the table associated with the node MAC address 
             #or create it if it doesn't exist
             with self.h5FileLock:
                 self.tableFound=False
                 nodeNumber=0
                 for table in self.h5File.root.scannerNodes:
                     nodeNumber+=1
-                    if len(table)>0 and table.cols.ipAddr[0]==scanResults.clientAddr:
+                    if len(table)>0 and table.cols.macAddr[0]==scanResults.macAddr:
                         self.tableFound=True
                         break
                 
                 if not self.tableFound:
+                    #Avoid creating a new table with no data
+                    if scanResults.rssiData==None:
+                        continue
                     #The new tables will be consecutively named as node1, node2, node3, etc by order of arrival
                     tableName="node"+str(nodeNumber+1)
-                    table=self.h5File.createTable(self.h5Group, tableName, scanTableDesc, "Node with the IP " + str(scanResults.clientAddr), expectedrows=65536)
+                    table=self.h5File.createTable(self.h5Group, tableName, scanTableDesc, "Node with the MAC " + str(scanResults.macAddr), expectedrows=65536)
                     
                 else:
                     #Reset the node if it was inactive in the previous iteration
@@ -105,7 +109,7 @@ class H5ScannerThread(threading.Thread):
                         or table.cols.dvgaGain[0]!=scanOpt.dvgaGain \
                         or table.cols.rssiWait[0]!=scanOpt.rssiWait:
                         self.h5File.removeNode(self.h5Group, name="node"+str(nodeNumber), recursive=True)
-                        table=self.h5File.createTable(self.h5Group, "node"+str(nodeNumber), scanTableDesc, "Node with the IP " + str(scanResults.clientAddr))
+                        table=self.h5File.createTable(self.h5Group, "node"+str(nodeNumber), scanTableDesc, "Node with the MAC " + str(scanResults.macAddr), expectedrows=65536)
                         self.h5File.flush()                
                 
                 #If no RSSI data was included in the queue, we assume the board to be inactive
@@ -117,7 +121,8 @@ class H5ScannerThread(threading.Thread):
                 else:
                     #Store the scan options in the table
                     table.row['timestamp']=time.time()
-                    table.row['ipAddr']=str(scanResults.clientAddr)
+                    table.row['macAddr']=str(scanResults.macAddr)
+                    table.row['ipAddr']=str(scanResults.ipAddr)
                     table.row['isAlive']=True
                     table.row['freqStart']=scanOpt.freqStartMhz + scanOpt.freqStartKhz/1000.0
                     table.row['freqStop']=scanOpt.freqStopMhz + scanOpt.freqStopKhz/1000.0

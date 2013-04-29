@@ -4,6 +4,7 @@ import socket
 import select
 import struct
 import collections
+import binascii
 import threading
 import Queue
 import signal
@@ -17,7 +18,7 @@ class UdpScanProt():
 	'''
 	listenPort=9930
 	protId="GW"
-	headerFormat='<2sH6B'
+	headerFormat='<2sH6s'
 	optFormat='<HHHHHBBBBBxH'
 	Header=collections.namedtuple('ProtHeader', 'protId protLen macAddr')
 	Opt=collections.namedtuple('ScanOptions', 'freqStartMhz freqStartKhz \
@@ -32,9 +33,40 @@ class UdpScanProt():
 					'OOK':3,
 					'4-FSK':4,
 					'MSK':5 }
-
-
-#***END OF PARAMETERS***
+	invModFormatDict={0:'2-FSK',
+			 		1:'GFSK',
+					2:'ASK',
+					3:'OOK',
+					4:'4-FSK',
+					5:'MSK'}
+	
+	
+	#Limits for the opt values
+	minFreq=779
+	maxFreq=928
+	minLnaGain=0
+	maxLnaGain=3
+	minLna2Gain=0
+	maxLna2Gain=7
+	minDvgaGain=0
+	maxDvgaGain=7
+	
+	@staticmethod
+	def validate_opt(opt):
+		'''
+		Return True if the scan options make sense and False if they don't
+		:param opt: UdpScanProt.Opt namedtuple to be checked
+		'''
+		if opt.freqStartMhz<UdpScanProt.minFreq or opt.freqStartKhz>=1000 or opt.freqStartKhz<0 \
+			or opt.freqStopMhz>UdpScanProt.maxFreq or opt.freqStopKhz>=1000 or opt.freqStopKhz<0 \
+			or not UdpScanProt.invModFormatDict.has_key(opt.modFormat) \
+			or opt.agcEnabled<0 or opt.agcEnabled>1 \
+			or opt.lnaGain<UdpScanProt.minLnaGain or opt.lnaGain>UdpScanProt.maxLnaGain \
+			or opt.lna2Gain<UdpScanProt.minLna2Gain or opt.lna2Gain>UdpScanProt.maxLna2Gain \
+			or opt.dvgaGain<UdpScanProt.minDvgaGain or opt.dvgaGain>UdpScanProt.maxDvgaGain:
+			return False
+		else:
+			return True
 
 class UdpScannerServer(threading.Thread):
 	'''
@@ -122,13 +154,13 @@ class UdpScannerSM(threading.Thread):
 	'''
 	
 	def __init__(self, clientAddr, udpChunkQueue, scanDataQueue):
-		self.clientAddr = clientAddr
+		self.ipAddr = clientAddr
 		self.macAddr=""
 		self.udpChunkQueue = udpChunkQueue
 		self.scanDataQueue = scanDataQueue
 		
 		#Namedtuple format to input data into the queue of the graphical interface 
-		self.ScanResults=collections.namedtuple('ScanResult', 'clientAddr recvOpt rssiData')
+		self.ScanResults=collections.namedtuple('ScanResult', 'macAddr ipAddr recvOpt rssiData')
 		
 		#Protocol parameters
 		self.recvScanOptions=UdpScanProt.defaultOpt
@@ -172,27 +204,24 @@ class UdpScannerSM(threading.Thread):
 	def protRecvHeader(self):
 		#print "RECV_HEADER state"
 		if len(self.protBuffer)>=struct.calcsize(UdpScanProt.headerFormat):
-			protId, msgLen, macAddr=struct.unpack_from(UdpScanProt.headerFormat, bytes(self.protBuffer))
+# 			protId, msgLen, rawMac=struct.unpack_from(UdpScanProt.headerFormat, bytes(self.protBuffer))
+			protHeader=UdpScanProt.Header._make(struct.unpack_from(UdpScanProt.headerFormat, bytes(self.protBuffer)))
 			#Format the mac address for easier printing
-			print "Raw mac data: ", macAddr
-			self.macAddr="%02X:%02X:%02X:%02X:%02X:%02X" % struct.unpack("BBBBBB", macAddr)
-			print "Received a mac addr of ", self.macAddr
+			mac = [binascii.hexlify(x) for x in protHeader.macAddr]
+			self.macAddr=":".join(mac)
 			del self.protBuffer[:struct.calcsize(UdpScanProt.headerFormat)]
-			#print "The message protocol ID is:", protId
-			if protId==UdpScanProt.protId:
-				#print "The message length is", msgLen, "bytes"
-				if msgLen<struct.calcsize(UdpScanProt.optFormat):
-					#print "Erroneous message length: Message length=",msgLen, " OptHeader len=", struct.calcsize(UdpScanProt.optFormat)
+			if protHeader.protId==UdpScanProt.protId:
+				if protHeader.protLen<struct.calcsize(UdpScanProt.optFormat):
 					return self.protFail
 				#Get the amount of UINT16 RSSI values that the message contains and initialize the dataPayloadFormat string
-				self.amtRssiValues=msgLen-struct.calcsize(UdpScanProt.headerFormat)-struct.calcsize(UdpScanProt.optFormat)
+				self.amtRssiValues=protHeader.protLen-struct.calcsize(UdpScanProt.headerFormat)-struct.calcsize(UdpScanProt.optFormat)
 				if self.amtRssiValues<=0:
-					#print "Message erroneous, no RSSI data inside"
+					#Bad message, no RSSI data inside
 					return self.protFail
 				self.dataPayloadFormat=str(self.amtRssiValues)+"b"
 				return self.protRecvOpt
 			else:
-				#print "ProtId erroneous, ignoring message"
+				#Wrong ProtId, ignoring message
 				return self.protFail
 		else:
 			self.msgExpected=True
@@ -203,7 +232,11 @@ class UdpScannerSM(threading.Thread):
 		if len(self.protBuffer)>=struct.calcsize(UdpScanProt.optFormat):
 			self.recvScanOptions=UdpScanProt.Opt._make(struct.unpack_from(UdpScanProt.optFormat, bytes(self.protBuffer)))
 			del self.protBuffer[:struct.calcsize(UdpScanProt.optFormat)]
-			return self.protRecvData
+			#Check if the options make sense
+			if UdpScanProt.validate_opt(self.recvScanOptions):
+				return self.protRecvData
+			else:
+				return self.protFail
 		else:
 			self.msgExpected=True
 			return self.protRecvOpt
@@ -231,7 +264,7 @@ class UdpScannerSM(threading.Thread):
 		#print "***Finished receiving packet***\n"
 		self.msgExpected=True
 		#Pass the data to the graphical front-end as a namedtuple through the queue
-		self.scanDataQueue.put(self.ScanResults(clientAddr=self.clientAddr, recvOpt=self.recvScanOptions, rssiData=self.rssiData))
+		self.scanDataQueue.put(self.ScanResults(macAddr=self.macAddr, ipAddr=self.ipAddr, recvOpt=self.recvScanOptions, rssiData=self.rssiData))
 		return self.protIdle
 		
 		#****SM END****
@@ -248,7 +281,7 @@ class UdpScannerSM(threading.Thread):
 				newDataChunk=self.udpChunkQueue.get(block=True, timeout=self.maxSilentWait)
 			except Queue.Empty, e:
 				#Inform the H5 backend about the timeout by sending None in place of the rssi array
-				self.scanDataQueue.put(self.ScanResults(clientAddr=self.clientAddr, recvOpt=None, rssiData=None))
+				self.scanDataQueue.put(self.ScanResults(macAddr=self.macAddr, ipAddr=self.ipAddr, recvOpt=None, rssiData=None))
 				self.join()
 			else:
 				#Check if we received the exit message
@@ -280,7 +313,7 @@ class UdpScannerClient(threading.Thread):
 		
 		#Protocol parameters
 		self.pkgLen=struct.calcsize(UdpScanProt.optFormat)+struct.calcsize(UdpScanProt.headerFormat)
-		self.protHeader = UdpScanProt.Header(protId=UdpScanProt.protId, protLen=self.pkgLen)
+		self.protHeader = UdpScanProt.Header(protId=UdpScanProt.protId, protLen=self.pkgLen, macAddr="000000000000")
 		
 		threading.Thread.__init__(self)
 		self.start()

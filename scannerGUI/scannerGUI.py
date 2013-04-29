@@ -145,7 +145,7 @@ class ScanPlotPanel(wx.Panel):
         self.freqStart=h5table.cols.freqStart[0]
         self.freqStop=h5table.cols.freqStop[0]
         self.freqRes=h5table.cols.freqRes[0]
-        self.axes.set_title("Scan results from the detector with IP "+h5table.cols.ipAddr[0]+" as of "+
+        self.axes.set_title("Scan results from the detector with the MAC "+h5table.cols.macAddr[0]+" as of "+
                     datetime.datetime.fromtimestamp(h5table.cols.timestamp[len(h5table)-1]).strftime('%c'), size='medium')
         self.redrawNeeded=True
         
@@ -217,7 +217,7 @@ class ScannerGUI(wx.Frame):
         #print self.mgr.SavePerspective()
         
         #IP of the board currently displayed on the FigureCanvas
-        self.ipPlottedBoard=None
+        self.macPlottedBoard=None
         #Flag to force a replot even if there's no new data in the HDF5 file
         self.replotRequested=False
         #Timestamp of the last data plotted in the FigureCanvas
@@ -240,7 +240,7 @@ class ScannerGUI(wx.Frame):
         #Timer that triggers the sending of the scan settings to the boards of the grid
         self.sendScanOptTimer=wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_sendScanOpt_timer, self.sendScanOptTimer)
-        self.sendScanOptTimer.Start(2000)
+        self.sendScanOptTimer.Start(1000)
         
         
         #Create the timer for checking the HDF5 scan data
@@ -286,10 +286,10 @@ class ScannerGUI(wx.Frame):
         Create the pane that lists the active white space detector boards
         '''
         self.boardList = ULC.UltimateListCtrl(self, wx.ID_ANY, size=wx.DefaultSize ,agwStyle=wx.LC_REPORT)
-        self.boardList.InsertColumn(0, "IP", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
-        self.boardList.InsertColumn(1, "Status", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
-        self.boardList.InsertColumn(2, "Join date", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
-        #self.boardList.InsertColumn(2, "Location", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
+        self.boardList.InsertColumn(0, "MAC", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
+        self.boardList.InsertColumn(1, "IP", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
+        self.boardList.InsertColumn(2, "Status", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
+        self.boardList.InsertColumn(3, "Join date", format=ULC.ULC_FORMAT_CENTER, width=wx.LIST_AUTOSIZE_USEHEADER)
         
         #Bind the event of double clicking or pressing enter on top of a list item,
         #used to change the board being plotted in the main window
@@ -399,8 +399,8 @@ class ScannerGUI(wx.Frame):
             boardIpList=[]
             #Get a list of all the active boards to which we will send the new scan options
             for index in range(0, maxIndex):
-                boardIp=self.boardList.GetItem(index, 0).GetText()
-                if self.boardList.GetItem(index, 1).GetText()=='Active':
+                boardIp=self.boardList.GetItem(index, 1).GetText()
+                if self.boardList.GetItem(index, 2).GetText()=='Active':
                     #Ignore localhost
                     if not boardIp.startswith("127."):
                         boardIpList.append(boardIp)
@@ -439,33 +439,33 @@ class ScannerGUI(wx.Frame):
                 continue
             #Update the node if it's already in the list
             #and otherwise create it(FindItem returns -1 in case of failure)
-            boardIndex=self.boardList.FindItem(start=-1, str=node.cols.ipAddr[0], partial=False)
+            boardIndex=self.boardList.FindItem(start=-1, str=node.cols.macAddr[0], partial=False)
             if boardIndex==-1:
-                ipIndex=self.boardList.InsertStringItem(sys.maxint, label=node.cols.ipAddr[0])
+                macIndex=self.boardList.InsertStringItem(sys.maxint, label=node.cols.macAddr[0])
+                statIndex=self.boardList.SetStringItem(macIndex, col=1, label=node.cols.ipAddr[0])
                 if node.cols.isAlive[0]:
-                    statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Active")
+                    statIndex=self.boardList.SetStringItem(macIndex, col=2, label="Active")
                     self.boardList.SetItemTextColour(statIndex, wx.NamedColour("forest green"))
-                    self.boardList.SetStringItem(ipIndex, col=2, label=datetime.datetime.fromtimestamp(node.cols.timestamp[0]).strftime('%c'))
-                    self.flash_status_message("Detected a new active board with the IP "+node.cols.ipAddr[0])
                 else:
-                    statIndex=self.boardList.SetStringItem(ipIndex, col=1, label="Inactive")
+                    statIndex=self.boardList.SetStringItem(macIndex, col=2, label="Inactive")
                     self.boardList.SetItemTextColour(statIndex, wx.NamedColour("indian red"))
-                    self.flash_status_message("Detected a new inactive board with the IP "+node.cols.ipAddr[0])
+                self.boardList.SetStringItem(macIndex, col=3, label=datetime.datetime.fromtimestamp(node.cols.timestamp[0]).strftime('%c'))
+                self.flash_status_message("Detected a new board with the MAC "+node.cols.macAddr[0])
             else:
-                statItem=self.boardList.GetItem(boardIndex, col=1)
-                joinItem=self.boardList.GetItem(boardIndex, col=2)
+                statItem=self.boardList.GetItem(boardIndex, col=2)
+                joinItem=self.boardList.GetItem(boardIndex, col=3)
                 if node.cols.isAlive[0] and statItem.GetText()!="Active":
                     statItem.SetText("Active")
                     self.boardList.SetItem(statItem)
                     self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("forest green"))
                     joinItem.SetText(datetime.datetime.fromtimestamp(node.cols.timestamp[0]).strftime('%c'))
                     self.boardList.SetItem(joinItem)
-                    self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became active")
+                    self.flash_status_message("The board with the MAC "+node.cols.macAddr[0]+" became active")
                 elif not node.cols.isAlive[0] and statItem.GetText()!="Inactive":
                     statItem.SetText("Inactive")
                     self.boardList.SetItem(statItem)
                     self.boardList.SetItemTextColour(boardIndex, wx.NamedColour("indian red"))
-                    self.flash_status_message("The board with the IP "+node.cols.ipAddr[0]+" became inactive")
+                    self.flash_status_message("The board with the MAC "+node.cols.macAddr[0]+" became inactive")
                     
             #Get the scan options of the node with the most recent timestamp
             if node.cols.isAlive[0] and node.cols.timestamp[len(node)-1]>self.recvScanOptTimestamp:
@@ -483,11 +483,11 @@ class ScannerGUI(wx.Frame):
                     
             #If there is new data, update the board selected in the list,
             #if there is none we pick the first board of the HDF5 file
-            if self.ipPlottedBoard==None:
-                self.ipPlottedBoard=node.cols.ipAddr[0]
+            if self.macPlottedBoard==None:
+                self.macPlottedBoard=node.cols.macAddr[0]
                 self.plottedDataTimestamp=node.cols.timestamp[len(node)-1]
                 self.scanPlot.update_plot(node)
-            elif self.ipPlottedBoard==node.cols.ipAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node)-1]:
+            elif self.macPlottedBoard==node.cols.macAddr[0] and self.plottedDataTimestamp<node.cols.timestamp[len(node)-1]:
                 self.plottedDataTimestamp=node.cols.timestamp[len(node)-1]
                 self.scanPlot.update_plot(node)
         
@@ -512,7 +512,7 @@ class ScannerGUI(wx.Frame):
         which becomes the one plotted in the main window
         :param event: ULC.EVT_LIST_ITEM_SELECTED
         '''
-        self.ipPlottedBoard=event.GetText()
+        self.macPlottedBoard=event.GetText()
         self.plottedDataTimestamp=0
         self.replotRequested=True
         

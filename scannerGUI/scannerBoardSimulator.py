@@ -11,7 +11,7 @@ from scannerUdpBackend import UdpScanProt
 
 DFLT_SRC_IP = "127.0.0.1"
 DFLT_DST_IP = "127.0.0.1"
-DFLT_SRC_MAC = "02:00:00:00:00:01"
+DFLT_SRC_MAC = "0E:00:00:00:00:01"
 SRC_PORT = 60000
 DST_PORT = 9930
 MIN_FREQ=779.0
@@ -45,7 +45,9 @@ if args.srcIP!=DFLT_SRC_IP:
 		from scapy.all import *
 		#Compute the mac addr based on the IP if there's no mac address specified
 		if args.srcMAC==DFLT_SRC_MAC:
-			args.srcMAC="%20:%01:%02X:%02X:%02X:%02X" % struct.unpack("BBBB", args.srcIP)
+			ipChars=str.split(args.srcIP, '.')
+			ipHex=["%02X" % int(x) for x in ipChars]
+			args.srcMAC="20:01"+":".join(ipHex)
 	except ImportError, e:
 		parser.error("Scapy package not installed, required for spoofing source IP address. Try sudo apt-get install python-scapy")
 else:
@@ -89,14 +91,8 @@ while args.packetLimit==None or pktSent<args.packetLimit:
 	rssiValuesDec=[(x+74)*2 for x in rssiValuesDbm]
 	#Generate the packet header according to the scanner protocol format
 	pkgLen=struct.calcsize(dataPayloadFormat)+struct.calcsize(UdpScanProt.optFormat)+struct.calcsize(UdpScanProt.headerFormat)
-	macStr=args.srcMAC.replace(":", "")
-	mac=[]
-	j=0
-	for i in range(0,6):
-		mac.append(binascii.hexlify(macStr[j:j+1]))
-		j+=2
-	print "mac is ", mac
-	protHeader = UdpScanProt.Header(protId=UdpScanProt.protId, protLen=pkgLen, macAddr=mac)
+	protHeader = UdpScanProt.Header(protId=UdpScanProt.protId, protLen=pkgLen,  
+								macAddr=binascii.unhexlify(args.srcMAC.replace(":","")))
 	packed_data = struct.pack(UdpScanProt.headerFormat, *protHeader)
 	#Add the default scan options
 	packed_data += struct.pack(UdpScanProt.optFormat, *testScanOpt)
